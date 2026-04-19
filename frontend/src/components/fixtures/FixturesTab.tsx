@@ -16,7 +16,7 @@ export default function FixturesTab() {
   useEffect(() => {
     api.get<{ competitions: Competition[] }>('/fixtures/competitions')
       .then(res => setCompetitions(res.competitions ?? []))
-      .catch(() => setError('Failed to load competitions. Check FOOTBALL_API_KEY is set.'))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : 'Failed to load competitions'))
   }, [])
 
   async function handlePreview() {
