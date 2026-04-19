@@ -56,6 +56,7 @@ func main() {
 	r.Handle("/api/fixtures/matches", managerMW(http.HandlerFunc(handlers.HandleListFixtures(database)))).Methods("GET")
 	r.Handle("/api/fixtures/import-matches", managerMW(http.HandlerFunc(handlers.HandleImportMatches(database)))).Methods("POST")
 	r.Handle("/api/fixtures/update-results", managerMW(http.HandlerFunc(handlers.HandleUpdateResults(database)))).Methods("POST")
+	r.Handle("/api/fixtures/{id}/result", managerMW(http.HandlerFunc(handlers.HandleManualFixtureResult(database)))).Methods("PUT")
 
 	// Manager/games routes (manager or games role)
 	gamesMW := middleware.RequireRole(models.RoleManager, models.RoleGames)
@@ -81,6 +82,7 @@ func main() {
 	r.Handle("/api/rounds/{roundId}/picks", gamesMW(http.HandlerFunc(handlers.HandleSavePicks(database)))).Methods("POST")
 	r.Handle("/api/rounds/{roundId}/scope", gamesMW(http.HandlerFunc(handlers.HandleGetRoundScope(database)))).Methods("GET")
 	r.Handle("/api/rounds/{roundId}/scope", gamesMW(http.HandlerFunc(handlers.HandleSetRoundScope(database)))).Methods("POST")
+	r.Handle("/api/rounds/{roundId}/apply-results", managerMW(http.HandlerFunc(handlers.HandleApplyFixtureResults(database)))).Methods("POST")
 	r.Handle("/api/rounds/{roundId}/finalize-picks", gamesMW(http.HandlerFunc(handlers.HandleFinalizePicks(database)))).Methods("POST")
 	r.Handle("/api/rounds/{roundId}/results", gamesMW(http.HandlerFunc(handlers.HandleSaveResults(database)))).Methods("POST")
 	r.Handle("/api/rounds/{roundId}/close", gamesMW(http.HandlerFunc(handlers.HandleCloseRound(database)))).Methods("POST")

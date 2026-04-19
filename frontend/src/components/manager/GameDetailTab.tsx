@@ -3,8 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { GameWithDetails, Participant, Round, Pick, Team, FixtureRow } from '../../types'
 
-type PickResult = 'win' | 'loss' | 'draw' | 'postponed'
-
 export default function GameDetailTab() {
   const { id } = useParams<{ id: string }>()
   const gameId = Number(id)
@@ -22,7 +20,6 @@ export default function GameDetailTab() {
 
   // picks: unified string "" | "t:{teamId}" | "f:{fixtureId}:home|away"
   const [pendingPicks, setPendingPicks] = useState<Record<string, string>>({})
-  const [pendingResults, setPendingResults] = useState<Record<number, PickResult>>({})
 
   // round scope
   const [roundScope, setRoundScope] = useState<FixtureRow[]>([])
@@ -38,17 +35,20 @@ export default function GameDetailTab() {
   const [usedTeamNames, setUsedTeamNames] = useState<Record<string, string[]>>({})
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
+  const [checkingResults, setCheckingResults] = useState(false)
+  const [manualScores, setManualScores] = useState<Record<number, { home: string; away: string; status: string }>>({})
 
   const loadGame = useCallback(async () => {
     try {
       const [gameRes, usedRes] = await Promise.all([
         api.get<{ game: GameWithDetails; participants: Participant[]; rounds: Round[] }>(`/games/${gameId}`),
-        api.get<{ usedTeams: Record<string, number[]> }>(`/games/${gameId}/used-teams`),
+        api.get<{ usedTeams: Record<string, number[]>; usedTeamNames?: Record<string, string[]> }>(`/games/${gameId}/used-teams`),
       ])
       setGame(gameRes.game)
       setParticipants(gameRes.participants)
       setRounds(gameRes.rounds)
       setUsedTeams(usedRes.usedTeams ?? {})
+      setUsedTeamNames(usedRes.usedTeamNames ?? {})
     } catch {
       navigate('/games')
     }
@@ -66,40 +66,28 @@ export default function GameDetailTab() {
     api.get<{ teams: Team[] }>(`/groups/${game.groupId}/teams`).then(r => setTeams(r.teams ?? []))
   }, [game])
 
-  useEffect(() => {
-    if (!openRound) return
-    // Load picks
-    api.get<{ picks: Pick[] }>(`/rounds/${openRound.id}/picks`).then(r => {
-      const p = r.picks ?? []
-      setPicks(p)
-      const map: Record<string, string> = {}
-      p.forEach(pick => {
-        if (pick.fixtureId && pick.pickedSide) {
-          map[pick.playerName] = `f:${pick.fixtureId}:${pick.pickedSide}`
-        } else if (pick.teamId) {
-          map[pick.playerName] = `t:${pick.teamId}`
-        } else {
-          map[pick.playerName] = ''
-        }
-      })
-      setPendingPicks(map)
+  async function reloadRoundData(roundId: number) {
+    const [picksRes, scopeRes] = await Promise.all([
+      api.get<{ picks: Pick[] }>(`/rounds/${roundId}/picks`),
+      api.get<{ fixtures: FixtureRow[] }>(`/rounds/${roundId}/scope`),
+    ])
+    const p = picksRes.picks ?? []
+    setPicks(p)
+    const map: Record<string, string> = {}
+    p.forEach(pick => {
+      if (pick.fixtureId && pick.pickedSide) map[pick.playerName] = `f:${pick.fixtureId}:${pick.pickedSide}`
+      else if (pick.teamId) map[pick.playerName] = `t:${pick.teamId}`
+      else map[pick.playerName] = ''
     })
-    // Load round scope
-    api.get<{ fixtures: FixtureRow[] }>(`/rounds/${openRound.id}/scope`).then(r => {
-      setRoundScope(r.fixtures ?? [])
-      setSelectedFixtureIds(new Set((r.fixtures ?? []).map(f => f.id)))
-    })
-  }, [openRound?.id])
+    setPendingPicks(map)
+    setRoundScope(scopeRes.fixtures ?? [])
+  }
 
   useEffect(() => {
-    if (!game) return
-    // Load used team names alongside team IDs
-    api.get<{ usedTeams: Record<string, number[]>; usedTeamNames?: Record<string, string[]> }>(
-      `/games/${gameId}/used-teams`
-    ).then(r => {
-      setUsedTeamNames(r.usedTeamNames ?? {})
-    })
-  }, [game, gameId])
+    if (!openRound) return
+    reloadRoundData(openRound.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRound?.id])
 
   function parsePick(val: string) {
     if (!val) return { teamId: null, fixtureId: null, pickedSide: null }
@@ -135,13 +123,8 @@ export default function GameDetailTab() {
     try {
       const res = await api.post<{ missingCount: number }>(`/rounds/${openRound.id}/finalize-picks`, {})
       setMsg(`Picks finalised. Auto-assigned: ${res.missingCount}`)
+      await reloadRoundData(openRound.id)
       loadGame()
-      api.get<{ picks: Pick[] }>(`/rounds/${openRound.id}/picks`).then(r => {
-        setPicks(r.picks ?? [])
-        const map: Record<string, number | null> = {}
-        ;(r.picks ?? []).forEach(p => { map[p.playerName] = p.teamId ?? null })
-        setPendingPicks(map)
-      })
     } catch (e: unknown) {
       setMsg(e instanceof Error ? e.message : 'Failed to finalize picks')
     } finally {
@@ -149,7 +132,61 @@ export default function GameDetailTab() {
     }
   }
 
-  async function saveResults() {
+  async function checkForResults() {
+    if (!openRound) return
+    setCheckingResults(true)
+    setMsg('')
+    try {
+      const codes = [...new Set(roundScope.map(f => f.competitionCode))]
+      await Promise.all(codes.map(code => api.post(`/fixtures/update-results?code=${code}`, {})))
+      await reloadRoundData(openRound.id)
+      setMsg('Results refreshed from API')
+    } catch (e: unknown) {
+      setMsg(e instanceof Error ? e.message : 'Failed to check results')
+    } finally {
+      setCheckingResults(false)
+    }
+  }
+
+  async function setManualResult(fixtureId: number) {
+    const ms = manualScores[fixtureId]
+    if (!ms) return
+    setSaving(true)
+    setMsg('')
+    try {
+      const homeScore = ms.home !== '' ? parseInt(ms.home) : null
+      const awayScore = ms.away !== '' ? parseInt(ms.away) : null
+      await api.put(`/fixtures/${fixtureId}/result`, {
+        homeScore,
+        awayScore,
+        status: ms.status || 'FINISHED',
+      })
+      if (openRound) await reloadRoundData(openRound.id)
+      setMsg('Score set')
+    } catch (e: unknown) {
+      setMsg(e instanceof Error ? e.message : 'Failed to set score')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function applyResults() {
+    if (!openRound) return
+    setSaving(true)
+    setMsg('')
+    try {
+      await api.post(`/rounds/${openRound.id}/apply-results`, {})
+      await reloadRoundData(openRound.id)
+      await loadGame()
+      setMsg('Results confirmed')
+    } catch (e: unknown) {
+      setMsg(e instanceof Error ? e.message : 'Failed to apply results')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function saveResults(pendingResults: Record<number, string>) {
     if (!openRound) return
     setSaving(true)
     setMsg('')
@@ -160,6 +197,7 @@ export default function GameDetailTab() {
         }))
       })
       setMsg('Results saved')
+      await reloadRoundData(openRound.id)
       loadGame()
     } catch (e: unknown) {
       setMsg(e instanceof Error ? e.message : 'Failed to save results')
@@ -268,7 +306,22 @@ export default function GameDetailTab() {
     return teams.filter(t => !used.has(t.id))
   }
 
-  // Group picks by team for result entry — key is teamId or "f:{fixtureId}:{side}"
+  function fixtureResultLabel(f: FixtureRow, side: 'home' | 'away') {
+    if (['POSTPONED', 'SUSPENDED', 'CANCELLED'].includes(f.status)) {
+      return game?.postponeAsWin
+        ? { label: '✅ WIN (postponed)', color: '#22c55e' }
+        : { label: '🔄 postponed', color: '#94a3b8' }
+    }
+    if (f.status !== 'FINISHED' || f.homeScore === null || f.awayScore === null) return null
+    if (f.homeScore === f.awayScore) return { label: '🤝 draw', color: '#f59e0b' }
+    const homeWon = f.homeScore > f.awayScore
+    if ((side === 'home' && homeWon) || (side === 'away' && !homeWon)) {
+      return { label: '✅ WIN', color: '#22c55e' }
+    }
+    return { label: '❌ LOSS', color: '#ef4444' }
+  }
+
+  // Group picks by team/fixture for results display
   const picksByTeam = picks.reduce<Record<string, Pick[]>>((acc, p) => {
     const key = p.fixtureId ? `f:${p.fixtureId}:${p.pickedSide}` : p.teamId ? String(p.teamId) : null
     if (key) {
@@ -282,8 +335,11 @@ export default function GameDetailTab() {
     .filter(p => p.isActive)
     .every(p => picks.find(pk => pk.playerName === p.playerName && (pk.teamId || pk.fixtureId)))
 
-  const allResultsEntered = allPicksHaveTeam &&
-    picks.filter(p => p.teamId || p.fixtureId).every(p => pendingResults[p.id] || p.result)
+  const allFixturesSettled = roundScope.length > 0 &&
+    roundScope.every(f => ['FINISHED', 'POSTPONED', 'SUSPENDED', 'CANCELLED'].includes(f.status))
+
+  const allPicksHaveResults = picks.length > 0 &&
+    picks.filter(p => p.teamId || p.fixtureId).every(p => !!p.result)
 
   if (loading) return <div className="empty">Loading…</div>
   if (!game) return null
@@ -336,7 +392,7 @@ export default function GameDetailTab() {
         </div>
       </div>
 
-      {/* Open Round: Picks */}
+      {/* Open Round */}
       {openRound && game.status === 'active' && (
         <div className="card" data-testid="open-round-panel">
           <h2>Round {openRound.roundNumber} — Picks</h2>
@@ -347,7 +403,7 @@ export default function GameDetailTab() {
             </p>
           )}
 
-          {/* Round Scope — collapsible */}
+          {/* Round Scope */}
           <div style={{ marginBottom: '1rem', border: '1px solid #e2e8f0', borderRadius: '6px' }}
             data-testid="round-scope-panel">
             <button
@@ -427,6 +483,7 @@ export default function GameDetailTab() {
             )}
           </div>
 
+          {/* Reveal toggle */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
             <button className="btn btn-secondary btn-sm"
               onClick={() => setRevealing(prev => !prev)}
@@ -436,6 +493,7 @@ export default function GameDetailTab() {
             </button>
           </div>
 
+          {/* Picks table */}
           <table aria-label="Round picks" data-testid="picks-table">
             <thead><tr><th>Player</th><th>Pick</th><th>Status</th></tr></thead>
             <tbody>
@@ -448,7 +506,6 @@ export default function GameDetailTab() {
                   <tr key={p.id} data-testid={`pick-row-${slug}`}>
                     <td>{p.playerName}</td>
                     <td>
-                      {/* Always render select to prevent layout shift; overlay masks it when hidden */}
                       <div style={{ position: 'relative', display: 'inline-block', minWidth: '200px' }}>
                         <select
                           value={currentPick}
@@ -492,7 +549,14 @@ export default function GameDetailTab() {
                         )}
                       </div>
                     </td>
-                    <td>{pick?.autoAssigned && <span className="badge badge-open">auto</span>}</td>
+                    <td>
+                      {pick?.autoAssigned && <span className="badge badge-open">auto</span>}
+                      {pick?.result && (
+                        <span className={`badge badge-${pick.result === 'win' ? 'active' : pick.result === 'loss' ? 'eliminated' : 'closed'}`}>
+                          {pick.result}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 )
               })}
@@ -506,49 +570,35 @@ export default function GameDetailTab() {
               data-testid="btn-finalize-picks">Finalize Picks</button>
           </div>
 
-          {/* Results entry (shown when all picks have teams) */}
-          {allPicksHaveTeam && (
-            <div style={{ marginTop: '1.5rem' }} data-testid="results-panel">
-              <h3>Enter Results</h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.75rem' }}>
-                {Object.entries(picksByTeam).map(([key, teamPicks]) => {
-                  const teamName = teamPicks[0].teamName || key
-                  const currentResult = pendingResults[teamPicks[0].id] ?? teamPicks[0].result
-                  return (
-                    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}
-                      data-testid={`result-row-${key}`}>
-                      <span style={{ minWidth: '140px', fontWeight: 500 }}>{teamName}</span>
-                      <span style={{ color: '#64748b', fontSize: '0.8rem' }}>
-                        ({teamPicks.map(p => p.playerName).join(', ')})
-                      </span>
-                      {(['win','loss','draw','postponed'] as PickResult[]).map(r => (
-                        <button key={r}
-                          className={`result-btn ${currentResult === r ? r : ''}`}
-                          onClick={() => {
-                            const update: Record<number, PickResult> = {}
-                            teamPicks.forEach(p => { update[p.id] = r })
-                            setPendingResults(prev => ({ ...prev, ...update }))
-                          }}
-                          data-testid={`btn-result-${r}-${key}`}
-                          aria-label={`Set ${teamName} result to ${r}`}
-                          aria-pressed={currentResult === r}
-                        >
-                          {r}
-                        </button>
-                      ))}
-                    </div>
-                  )
-                })}
-              </div>
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
-                <button className="btn btn-primary" onClick={saveResults} disabled={saving}
-                  data-testid="btn-save-results">Save Results</button>
-                {allResultsEntered && (
-                  <button className="btn btn-secondary" onClick={closeRound} disabled={saving}
-                    data-testid="btn-close-round">Close Round</button>
-                )}
-              </div>
-            </div>
+          {/* Fixture-based results panel */}
+          {allPicksHaveTeam && roundScope.length > 0 && (
+            <FixtureResultsPanel
+              roundScope={roundScope}
+              picksByTeam={picksByTeam}
+              manualScores={manualScores}
+              setManualScores={setManualScores}
+              checkingResults={checkingResults}
+              saving={saving}
+              allFixturesSettled={allFixturesSettled}
+              allPicksHaveResults={allPicksHaveResults}
+              postponeAsWin={game.postponeAsWin}
+              onCheckResults={checkForResults}
+              onSetManualResult={setManualResult}
+              onApplyResults={applyResults}
+              onCloseRound={closeRound}
+              formatFixtureDate={formatFixtureDate}
+            />
+          )}
+
+          {/* Manual results panel (no scope) */}
+          {allPicksHaveTeam && roundScope.length === 0 && (
+            <ManualResultsPanel
+              picks={picks}
+              picksByTeam={picksByTeam}
+              saving={saving}
+              onSaveResults={saveResults}
+              onCloseRound={closeRound}
+            />
           )}
         </div>
       )}
@@ -597,6 +647,232 @@ export default function GameDetailTab() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+interface FixtureResultsPanelProps {
+  roundScope: FixtureRow[]
+  picksByTeam: Record<string, Pick[]>
+  manualScores: Record<number, { home: string; away: string; status: string }>
+  setManualScores: React.Dispatch<React.SetStateAction<Record<number, { home: string; away: string; status: string }>>>
+  checkingResults: boolean
+  saving: boolean
+  allFixturesSettled: boolean
+  allPicksHaveResults: boolean
+  postponeAsWin: boolean
+  onCheckResults: () => void
+  onSetManualResult: (fixtureId: number) => void
+  onApplyResults: () => void
+  onCloseRound: () => void
+  formatFixtureDate: (iso: string) => string
+}
+
+function FixtureResultsPanel({
+  roundScope, picksByTeam, manualScores, setManualScores,
+  checkingResults, saving, allFixturesSettled, allPicksHaveResults, postponeAsWin,
+  onCheckResults, onSetManualResult, onApplyResults, onCloseRound, formatFixtureDate
+}: FixtureResultsPanelProps) {
+  function resultLabel(f: FixtureRow, side: 'home' | 'away') {
+    if (['POSTPONED', 'SUSPENDED', 'CANCELLED'].includes(f.status)) {
+      return postponeAsWin
+        ? { label: '✅ WIN (postponed)', color: '#22c55e' }
+        : { label: '🔄 postponed', color: '#94a3b8' }
+    }
+    if (f.status !== 'FINISHED' || f.homeScore === null || f.awayScore === null) return null
+    if (f.homeScore === f.awayScore) return { label: '🤝 draw', color: '#f59e0b' }
+    const homeWon = f.homeScore > f.awayScore
+    if ((side === 'home' && homeWon) || (side === 'away' && !homeWon)) {
+      return { label: '✅ WIN', color: '#22c55e' }
+    }
+    return { label: '❌ LOSS', color: '#ef4444' }
+  }
+
+  return (
+    <div style={{ marginTop: '1.5rem' }} data-testid="fixture-results-panel">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <h3 style={{ margin: 0 }}>Results</h3>
+        <button className="btn btn-secondary btn-sm" onClick={onCheckResults}
+          disabled={checkingResults} data-testid="btn-check-results">
+          {checkingResults ? 'Checking…' : '🔄 Check for Results'}
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        {roundScope.map(f => {
+          const homePickers = picksByTeam[`f:${f.id}:home`] ?? []
+          const awayPickers = picksByTeam[`f:${f.id}:away`] ?? []
+          const settled = ['FINISHED', 'POSTPONED', 'SUSPENDED', 'CANCELLED'].includes(f.status)
+          const scoreDisplay = f.homeScore !== null && f.awayScore !== null
+            ? `${f.homeScore} – ${f.awayScore}`
+            : null
+          const homeResult = resultLabel(f, 'home')
+          const awayResult = resultLabel(f, 'away')
+          const ms = manualScores[f.id] ?? { home: '', away: '', status: 'FINISHED' }
+
+          return (
+            <div key={f.id} style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.75rem' }}
+              data-testid={`fixture-result-${f.id}`}>
+
+              {/* Match header */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.6rem', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 600 }}>{f.homeTeam}</span>
+                <span style={{ color: '#64748b' }}>vs</span>
+                <span style={{ fontWeight: 600 }}>{f.awayTeam}</span>
+                {scoreDisplay && (
+                  <span style={{ fontWeight: 700, fontSize: '1rem', color: '#1e293b', padding: '0 0.25rem' }}>
+                    {scoreDisplay}
+                  </span>
+                )}
+                <span style={{ color: '#64748b', fontSize: '0.8rem' }}>· {formatFixtureDate(f.matchDate)}</span>
+                <span style={{
+                  fontSize: '0.7rem', padding: '0.15rem 0.45rem', borderRadius: '4px',
+                  background: settled ? '#dcfce7' : '#fef3c7',
+                  color: settled ? '#166534' : '#92400e',
+                  fontWeight: 600
+                }}>{f.status}</span>
+              </div>
+
+              {/* Pickers by side */}
+              <div style={{ display: 'flex', gap: '2rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                <PickerList label={f.homeTeam} pickers={homePickers} result={homeResult} />
+                <PickerList label={f.awayTeam} pickers={awayPickers} result={awayResult} />
+              </div>
+
+              {/* Manual score override */}
+              <details style={{ marginTop: '0.25rem' }}>
+                <summary style={{ fontSize: '0.75rem', color: '#94a3b8', cursor: 'pointer', userSelect: 'none' }}>
+                  Set score manually (for testing — a live refresh will overwrite)
+                </summary>
+                <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.4rem', flexWrap: 'wrap' }}>
+                  <input type="number" placeholder="Home" value={ms.home} min="0"
+                    onChange={e => setManualScores(prev => ({ ...prev, [f.id]: { ...ms, home: e.target.value } }))}
+                    style={{ width: '65px', padding: '0.25rem 0.4rem' }}
+                    data-testid={`input-home-score-${f.id}`} />
+                  <span style={{ color: '#94a3b8' }}>–</span>
+                  <input type="number" placeholder="Away" value={ms.away} min="0"
+                    onChange={e => setManualScores(prev => ({ ...prev, [f.id]: { ...ms, away: e.target.value } }))}
+                    style={{ width: '65px', padding: '0.25rem 0.4rem' }}
+                    data-testid={`input-away-score-${f.id}`} />
+                  <select value={ms.status}
+                    onChange={e => setManualScores(prev => ({ ...prev, [f.id]: { ...ms, status: e.target.value } }))}
+                    style={{ padding: '0.25rem 0.4rem' }}
+                    data-testid={`select-status-${f.id}`}>
+                    <option value="FINISHED">FINISHED</option>
+                    <option value="POSTPONED">POSTPONED</option>
+                    <option value="CANCELLED">CANCELLED</option>
+                    <option value="SCHEDULED">SCHEDULED</option>
+                    <option value="IN_PLAY">IN_PLAY</option>
+                  </select>
+                  <button className="btn btn-secondary btn-sm" onClick={() => onSetManualResult(f.id)}
+                    disabled={saving} data-testid={`btn-set-score-${f.id}`}>
+                    Set Score
+                  </button>
+                </div>
+              </details>
+            </div>
+          )
+        })}
+      </div>
+
+      <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        {allFixturesSettled && !allPicksHaveResults && (
+          <button className="btn btn-primary" onClick={onApplyResults} disabled={saving}
+            data-testid="btn-confirm-results">
+            Confirm Results
+          </button>
+        )}
+        {allPicksHaveResults && (
+          <button className="btn btn-secondary" onClick={onCloseRound} disabled={saving}
+            data-testid="btn-close-round">
+            Close Round
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PickerList({ label, pickers, result }: {
+  label: string
+  pickers: Pick[]
+  result: { label: string; color: string } | null
+}) {
+  return (
+    <div style={{ minWidth: '140px' }}>
+      <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '0.25rem', fontWeight: 500 }}>{label}</div>
+      {pickers.length > 0
+        ? pickers.map(p => (
+          <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.875rem', marginBottom: '0.1rem' }}>
+            <span>{p.playerName}</span>
+            {result && <span style={{ color: result.color, fontWeight: 600, fontSize: '0.8rem' }}>{result.label}</span>}
+          </div>
+        ))
+        : <span style={{ color: '#cbd5e1', fontSize: '0.8rem' }}>—</span>
+      }
+    </div>
+  )
+}
+
+type PickResult = 'win' | 'loss' | 'draw' | 'postponed'
+
+interface ManualResultsPanelProps {
+  picks: Pick[]
+  picksByTeam: Record<string, Pick[]>
+  saving: boolean
+  onSaveResults: (results: Record<number, string>) => void
+  onCloseRound: () => void
+}
+
+function ManualResultsPanel({ picks, picksByTeam, saving, onSaveResults, onCloseRound }: ManualResultsPanelProps) {
+  const [pendingResults, setPendingResults] = useState<Record<number, PickResult>>({})
+
+  const allResultsEntered = picks.filter(p => p.teamId || p.fixtureId).length > 0 &&
+    picks.filter(p => p.teamId || p.fixtureId).every(p => pendingResults[p.id] || p.result)
+
+  return (
+    <div style={{ marginTop: '1.5rem' }} data-testid="results-panel">
+      <h3>Enter Results</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.75rem' }}>
+        {Object.entries(picksByTeam).map(([key, teamPicks]) => {
+          const teamName = teamPicks[0].teamName || key
+          const currentResult = pendingResults[teamPicks[0].id] ?? teamPicks[0].result as PickResult | undefined
+          return (
+            <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}
+              data-testid={`result-row-${key}`}>
+              <span style={{ minWidth: '140px', fontWeight: 500 }}>{teamName}</span>
+              <span style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                ({teamPicks.map(p => p.playerName).join(', ')})
+              </span>
+              {(['win', 'loss', 'draw', 'postponed'] as PickResult[]).map(r => (
+                <button key={r}
+                  className={`result-btn ${currentResult === r ? r : ''}`}
+                  onClick={() => {
+                    const update: Record<number, PickResult> = {}
+                    teamPicks.forEach(p => { update[p.id] = r })
+                    setPendingResults(prev => ({ ...prev, ...update }))
+                  }}
+                  data-testid={`btn-result-${r}-${key}`}
+                  aria-label={`Set ${teamName} result to ${r}`}
+                  aria-pressed={currentResult === r}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          )
+        })}
+      </div>
+      <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+        <button className="btn btn-primary" onClick={() => onSaveResults(pendingResults)} disabled={saving}
+          data-testid="btn-save-results">Save Results</button>
+        {allResultsEntered && (
+          <button className="btn btn-secondary" onClick={onCloseRound} disabled={saving}
+            data-testid="btn-close-round">Close Round</button>
+        )}
+      </div>
     </div>
   )
 }

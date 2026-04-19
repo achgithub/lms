@@ -7,9 +7,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/andrewharris/lms/middleware"
+	"github.com/gorilla/mux"
 )
 
 // --- football-data.org response shapes ---
@@ -334,6 +336,37 @@ func HandleListFixturesByDate(db *sql.DB) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"fixtures": fixtures})
+	}
+}
+
+// HandleManualFixtureResult lets a manager manually set a fixture score (for testing).
+// A real "Check for Results" call will overwrite this with live data.
+func HandleManualFixtureResult(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fixtureID, err := strconv.Atoi(mux.Vars(r)["id"])
+		if err != nil {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			HomeScore *int   `json:"homeScore"`
+			AwayScore *int   `json:"awayScore"`
+			Status    string `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if body.Status == "" {
+			body.Status = "FINISHED"
+		}
+		_, err = db.Exec(`UPDATE fixtures SET home_score=$1, away_score=$2, status=$3, updated_at=NOW() WHERE id=$4`,
+			body.HomeScore, body.AwayScore, body.Status, fixtureID)
+		if err != nil {
+			http.Error(w, "server error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 

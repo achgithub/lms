@@ -146,20 +146,19 @@ func HandleFinalizePicks(db *sql.DB) http.HandlerFunc {
 		pRows, _ := db.Query(`SELECT player_name FROM managed_participants WHERE game_id=$1 AND is_active=true ORDER BY player_name`, gameID)
 		participants := scanNames(pRows)
 
-		// Existing picks
-		pickRows, _ := db.Query(`SELECT player_name, team_id FROM managed_picks WHERE round_id=$1 AND team_id IS NOT NULL`, roundID)
+		// Existing picks (team-based or fixture-based)
+		pickRows, _ := db.Query(`SELECT player_name FROM managed_picks WHERE round_id=$1 AND (team_id IS NOT NULL OR fixture_id IS NOT NULL)`, roundID)
 		defer pickRows.Close()
-		picksMap := make(map[string]int)
+		picksMap := make(map[string]bool)
 		for pickRows.Next() {
 			var name string
-			var tid int
-			pickRows.Scan(&name, &tid)
-			picksMap[name] = tid
+			pickRows.Scan(&name)
+			picksMap[name] = true
 		}
 
 		var missing []string
 		for _, p := range participants {
-			if _, ok := picksMap[p]; !ok {
+			if !picksMap[p] {
 				missing = append(missing, p)
 			}
 		}
@@ -295,6 +294,104 @@ func HandleCloseRound(db *sql.DB) http.HandlerFunc {
 		db.Exec(`UPDATE managed_rounds SET status='closed' WHERE id=$1`, roundID)
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// HandleApplyFixtureResults derives win/loss/draw from fixture scores and writes them to picks.
+func HandleApplyFixtureResults(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.ClaimsFromContext(r.Context())
+		roundID, err := strconv.Atoi(mux.Vars(r)["roundId"])
+		if err != nil {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+
+		var gameID, roundNumber int
+		var postponeAsWin bool
+		err = db.QueryRow(`
+			SELECT r.game_id, r.round_number, g.postpone_as_win FROM managed_rounds r
+			JOIN managed_games g ON g.id = r.game_id
+			WHERE r.id=$1 AND g.manager_id=$2
+		`, roundID, claims.UserID).Scan(&gameID, &roundNumber, &postponeAsWin)
+		if err == sql.ErrNoRows {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+
+		rows, err := db.Query(`
+			SELECT p.id, p.player_name, p.picked_side,
+			       f.home_score, f.away_score, f.status
+			FROM managed_picks p
+			JOIN fixtures f ON f.id = p.fixture_id
+			WHERE p.round_id = $1 AND p.fixture_id IS NOT NULL
+		`, roundID)
+		if err != nil {
+			http.Error(w, "server error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		type applyRow struct {
+			pickID     int
+			playerName string
+			side       string
+			result     string
+		}
+		var toApply []applyRow
+
+		for rows.Next() {
+			var pickID int
+			var playerName, side string
+			var homeScore, awayScore *int
+			var status string
+			if err := rows.Scan(&pickID, &playerName, &side, &homeScore, &awayScore, &status); err != nil {
+				continue
+			}
+			result := derivePickResult(side, homeScore, awayScore, status, postponeAsWin)
+			if result == "" {
+				continue
+			}
+			toApply = append(toApply, applyRow{pickID, playerName, side, result})
+		}
+
+		tx, _ := db.Begin()
+		defer tx.Rollback()
+		for _, a := range toApply {
+			tx.Exec(`UPDATE managed_picks SET result=$1 WHERE id=$2`, a.result, a.pickID)
+			eliminate := a.result == "loss" || a.result == "draw" || (a.result == "postponed" && !postponeAsWin)
+			if eliminate {
+				tx.Exec(`UPDATE managed_participants SET is_active=false, eliminated_in_round=$1
+				          WHERE game_id=$2 AND player_name=$3`, roundNumber, gameID, a.playerName)
+			}
+		}
+		tx.Commit()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"applied": len(toApply)})
+	}
+}
+
+func derivePickResult(side string, homeScore, awayScore *int, status string, postponeAsWin bool) string {
+	switch status {
+	case "POSTPONED", "SUSPENDED":
+		if postponeAsWin {
+			return "win"
+		}
+		return "postponed"
+	case "CANCELLED":
+		return "postponed"
+	}
+	if homeScore == nil || awayScore == nil {
+		return ""
+	}
+	if *homeScore == *awayScore {
+		return "draw"
+	}
+	homeWon := *homeScore > *awayScore
+	if (side == "home" && homeWon) || (side == "away" && !homeWon) {
+		return "win"
+	}
+	return "loss"
 }
 
 func HandleGetRoundScope(db *sql.DB) http.HandlerFunc {
