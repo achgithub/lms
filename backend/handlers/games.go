@@ -299,7 +299,7 @@ func HandleGetUsedTeams(db *sql.DB) http.HandlerFunc {
 			JOIN fixtures f ON f.id = p.fixture_id
 			JOIN managed_rounds r ON r.id = p.round_id
 			WHERE p.game_id=$1 AND p.fixture_id IS NOT NULL AND r.status='closed'
-		`, gameID, gameID)
+		`, gameID)
 		if err == nil {
 			defer nameRows.Close()
 			usedTeamNames := make(map[string][]string)
