@@ -285,6 +285,38 @@ func HandleGetUsedTeams(db *sql.DB) http.HandlerFunc {
 			usedTeams[name] = append(usedTeams[name], teamID)
 		}
 
+		// Also collect used team names (from both regular picks via managed_teams and fixture picks)
+		nameRows, err := db.Query(`
+			SELECT p.player_name, t.name
+			FROM managed_picks p
+			JOIN managed_teams t ON t.id = p.team_id
+			JOIN managed_rounds r ON r.id = p.round_id
+			WHERE p.game_id=$1 AND p.team_id IS NOT NULL AND r.status='closed'
+			UNION ALL
+			SELECT p.player_name,
+			       CASE p.picked_side WHEN 'home' THEN f.home_team_name ELSE f.away_team_name END
+			FROM managed_picks p
+			JOIN fixtures f ON f.id = p.fixture_id
+			JOIN managed_rounds r ON r.id = p.round_id
+			WHERE p.game_id=$1 AND p.fixture_id IS NOT NULL AND r.status='closed'
+		`, gameID, gameID)
+		if err == nil {
+			defer nameRows.Close()
+			usedTeamNames := make(map[string][]string)
+			for nameRows.Next() {
+				var player, teamName string
+				if nameRows.Scan(&player, &teamName) == nil {
+					usedTeamNames[player] = append(usedTeamNames[player], teamName)
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"usedTeams":     usedTeams,
+				"usedTeamNames": usedTeamNames,
+			})
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"usedTeams": usedTeams})
 	}

@@ -54,6 +54,7 @@ func main() {
 	r.Handle("/api/fixtures/teams", managerMW(http.HandlerFunc(handlers.HandleGetCompetitionTeams()))).Methods("GET")
 	r.Handle("/api/fixtures/import", managerMW(http.HandlerFunc(handlers.HandleImportFixture(database)))).Methods("POST")
 	r.Handle("/api/fixtures/matches", managerMW(http.HandlerFunc(handlers.HandleListFixtures(database)))).Methods("GET")
+	r.Handle("/api/fixtures/by-date", gamesMW(http.HandlerFunc(handlers.HandleListFixturesByDate(database)))).Methods("GET")
 	r.Handle("/api/fixtures/import-matches", managerMW(http.HandlerFunc(handlers.HandleImportMatches(database)))).Methods("POST")
 	r.Handle("/api/fixtures/update-results", managerMW(http.HandlerFunc(handlers.HandleUpdateResults(database)))).Methods("POST")
 
@@ -78,6 +79,8 @@ func main() {
 	r.Handle("/api/games/{id}/participants", gamesMW(http.HandlerFunc(handlers.HandleAddParticipants(database)))).Methods("POST")
 	r.Handle("/api/rounds/{roundId}/picks", gamesMW(http.HandlerFunc(handlers.HandleGetRoundPicks(database)))).Methods("GET")
 	r.Handle("/api/rounds/{roundId}/picks", gamesMW(http.HandlerFunc(handlers.HandleSavePicks(database)))).Methods("POST")
+	r.Handle("/api/rounds/{roundId}/scope", gamesMW(http.HandlerFunc(handlers.HandleGetRoundScope(database)))).Methods("GET")
+	r.Handle("/api/rounds/{roundId}/scope", gamesMW(http.HandlerFunc(handlers.HandleSetRoundScope(database)))).Methods("POST")
 	r.Handle("/api/rounds/{roundId}/finalize-picks", gamesMW(http.HandlerFunc(handlers.HandleFinalizePicks(database)))).Methods("POST")
 	r.Handle("/api/rounds/{roundId}/results", gamesMW(http.HandlerFunc(handlers.HandleSaveResults(database)))).Methods("POST")
 	r.Handle("/api/rounds/{roundId}/close", gamesMW(http.HandlerFunc(handlers.HandleCloseRound(database)))).Methods("POST")

@@ -96,6 +96,8 @@ type Pick struct {
 	RoundID      int       `json:"roundId"`
 	PlayerName   string    `json:"playerName"`
 	TeamID       *int      `json:"teamId,omitempty"`
+	FixtureID    *int      `json:"fixtureId,omitempty"`
+	PickedSide   *string   `json:"pickedSide,omitempty"`
 	Result       *string   `json:"result,omitempty"`
 	AutoAssigned bool      `json:"autoAssigned"`
 	CreatedAt    time.Time `json:"createdAt"`
@@ -137,8 +139,10 @@ type CreateGameRequest struct {
 }
 
 type PickItem struct {
-	PlayerName string `json:"playerName"`
-	TeamID     *int   `json:"teamId"`
+	PlayerName string  `json:"playerName"`
+	TeamID     *int    `json:"teamId"`
+	FixtureID  *int    `json:"fixtureId"`
+	PickedSide *string `json:"pickedSide"`
 }
 
 type SavePicksRequest struct {

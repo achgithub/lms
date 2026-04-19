@@ -77,6 +77,8 @@ export interface Pick {
   playerName: string
   teamId?: number
   teamName?: string
+  fixtureId?: number
+  pickedSide?: 'home' | 'away'
   result?: 'win' | 'loss' | 'draw' | 'postponed'
   autoAssigned: boolean
   createdAt: string
@@ -90,6 +92,19 @@ export interface User {
   mustChangePw: boolean
   isActive: boolean
   createdAt: string
+}
+
+export interface FixtureRow {
+  id: number
+  apiMatchId: number
+  competitionCode: string
+  competitionName: string
+  matchDate: string
+  homeTeam: string
+  awayTeam: string
+  status: string
+  homeScore: number | null
+  awayScore: number | null
 }
 
 export interface Competition {

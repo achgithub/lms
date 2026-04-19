@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../../api/client'
-import type { GameWithDetails, Participant, Round, Pick, Team } from '../../types'
+import type { GameWithDetails, Participant, Round, Pick, Team, FixtureRow } from '../../types'
 
 type PickResult = 'win' | 'loss' | 'draw' | 'postponed'
 
@@ -20,8 +20,22 @@ export default function GameDetailTab() {
   const [revealing, setRevealing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
-  const [pendingPicks, setPendingPicks] = useState<Record<string, number | null>>({})
+  // picks: unified string "" | "t:{teamId}" | "f:{fixtureId}:home|away"
+  const [pendingPicks, setPendingPicks] = useState<Record<string, string>>({})
   const [pendingResults, setPendingResults] = useState<Record<number, PickResult>>({})
+
+  // round scope
+  const [roundScope, setRoundScope] = useState<FixtureRow[]>([])
+  const [scopeOpen, setScopeOpen] = useState(false)
+  const [scopeDateFrom, setScopeDateFrom] = useState(() => new Date().toISOString().slice(0, 10))
+  const [scopeDateTo, setScopeDateTo] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() + 28); return d.toISOString().slice(0, 10)
+  })
+  const [availableFixtures, setAvailableFixtures] = useState<FixtureRow[]>([])
+  const [selectedFixtureIds, setSelectedFixtureIds] = useState<Set<number>>(new Set())
+  const [scopeLoading, setScopeLoading] = useState(false)
+  const [scopeMsg, setScopeMsg] = useState('')
+  const [usedTeamNames, setUsedTeamNames] = useState<Record<string, string[]>>({})
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -54,14 +68,48 @@ export default function GameDetailTab() {
 
   useEffect(() => {
     if (!openRound) return
+    // Load picks
     api.get<{ picks: Pick[] }>(`/rounds/${openRound.id}/picks`).then(r => {
       const p = r.picks ?? []
       setPicks(p)
-      const map: Record<string, number | null> = {}
-      p.forEach(pick => { map[pick.playerName] = pick.teamId ?? null })
+      const map: Record<string, string> = {}
+      p.forEach(pick => {
+        if (pick.fixtureId && pick.pickedSide) {
+          map[pick.playerName] = `f:${pick.fixtureId}:${pick.pickedSide}`
+        } else if (pick.teamId) {
+          map[pick.playerName] = `t:${pick.teamId}`
+        } else {
+          map[pick.playerName] = ''
+        }
+      })
       setPendingPicks(map)
     })
+    // Load round scope
+    api.get<{ fixtures: FixtureRow[] }>(`/rounds/${openRound.id}/scope`).then(r => {
+      setRoundScope(r.fixtures ?? [])
+      setSelectedFixtureIds(new Set((r.fixtures ?? []).map(f => f.id)))
+    })
   }, [openRound?.id])
+
+  useEffect(() => {
+    if (!game) return
+    // Load used team names alongside team IDs
+    api.get<{ usedTeams: Record<string, number[]>; usedTeamNames?: Record<string, string[]> }>(
+      `/games/${gameId}/used-teams`
+    ).then(r => {
+      setUsedTeamNames(r.usedTeamNames ?? {})
+    })
+  }, [game, gameId])
+
+  function parsePick(val: string) {
+    if (!val) return { teamId: null, fixtureId: null, pickedSide: null }
+    if (val.startsWith('t:')) return { teamId: parseInt(val.slice(2)), fixtureId: null, pickedSide: null }
+    if (val.startsWith('f:')) {
+      const parts = val.split(':')
+      return { teamId: null, fixtureId: parseInt(parts[1]), pickedSide: parts[2] }
+    }
+    return { teamId: null, fixtureId: null, pickedSide: null }
+  }
 
   async function savePicks() {
     if (!openRound) return
@@ -69,7 +117,7 @@ export default function GameDetailTab() {
     setMsg('')
     try {
       await api.post(`/rounds/${openRound.id}/picks`, {
-        picks: Object.entries(pendingPicks).map(([playerName, teamId]) => ({ playerName, teamId }))
+        picks: Object.entries(pendingPicks).map(([playerName, val]) => ({ playerName, ...parsePick(val) }))
       })
       setMsg('Picks saved')
       loadGame()
@@ -170,26 +218,72 @@ export default function GameDetailTab() {
     }
   }
 
+  async function searchScopeFixtures() {
+    setScopeLoading(true)
+    try {
+      const r = await api.get<{ fixtures: FixtureRow[] }>(`/fixtures/by-date?dateFrom=${scopeDateFrom}&dateTo=${scopeDateTo}`)
+      setAvailableFixtures(r.fixtures ?? [])
+    } finally {
+      setScopeLoading(false)
+    }
+  }
+
+  async function saveScope() {
+    if (!openRound) return
+    setScopeLoading(true)
+    setScopeMsg('')
+    try {
+      await api.post(`/rounds/${openRound.id}/scope`, { fixtureIds: [...selectedFixtureIds] })
+      const r = await api.get<{ fixtures: FixtureRow[] }>(`/rounds/${openRound.id}/scope`)
+      setRoundScope(r.fixtures ?? [])
+      setScopeMsg(`Scope saved — ${r.fixtures?.length ?? 0} fixtures in this round.`)
+      setScopeOpen(false)
+    } catch (e: unknown) {
+      setScopeMsg(e instanceof Error ? e.message : 'Failed to save scope')
+    } finally {
+      setScopeLoading(false)
+    }
+  }
+
+  function toggleFixture(id: number) {
+    setSelectedFixtureIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  function isTeamNameUsed(teamName: string, playerName: string): boolean {
+    return (usedTeamNames[playerName] ?? []).some(n => n.toLowerCase() === teamName.toLowerCase())
+  }
+
+  function formatFixtureDate(iso: string) {
+    const d = new Date(iso)
+    return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) +
+      ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+  }
+
   function getAvailableTeams(playerName: string): Team[] {
     const used = new Set(usedTeams[playerName] ?? [])
     return teams.filter(t => !used.has(t.id))
   }
 
-  // Group picks by team for result entry
-  const picksByTeam = picks.reduce<Record<number, Pick[]>>((acc, p) => {
-    if (p.teamId) {
-      if (!acc[p.teamId]) acc[p.teamId] = []
-      acc[p.teamId].push(p)
+  // Group picks by team for result entry — key is teamId or "f:{fixtureId}:{side}"
+  const picksByTeam = picks.reduce<Record<string, Pick[]>>((acc, p) => {
+    const key = p.fixtureId ? `f:${p.fixtureId}:${p.pickedSide}` : p.teamId ? String(p.teamId) : null
+    if (key) {
+      if (!acc[key]) acc[key] = []
+      acc[key].push(p)
     }
     return acc
   }, {})
 
   const allPicksHaveTeam = picks.length > 0 && participants
     .filter(p => p.isActive)
-    .every(p => picks.find(pk => pk.playerName === p.playerName && pk.teamId))
+    .every(p => picks.find(pk => pk.playerName === p.playerName && (pk.teamId || pk.fixtureId)))
 
   const allResultsEntered = allPicksHaveTeam &&
-    picks.filter(p => p.teamId).every(p => pendingResults[p.id] || p.result)
+    picks.filter(p => p.teamId || p.fixtureId).every(p => pendingResults[p.id] || p.result)
 
   if (loading) return <div className="empty">Loading…</div>
   if (!game) return null
@@ -253,6 +347,86 @@ export default function GameDetailTab() {
             </p>
           )}
 
+          {/* Round Scope — collapsible */}
+          <div style={{ marginBottom: '1rem', border: '1px solid #e2e8f0', borderRadius: '6px' }}
+            data-testid="round-scope-panel">
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => { setScopeOpen(p => !p); if (!scopeOpen && availableFixtures.length === 0) searchScopeFixtures() }}
+              data-testid="btn-toggle-scope"
+              aria-expanded={scopeOpen}
+              style={{ width: '100%', textAlign: 'left', borderRadius: '6px', padding: '0.5rem 0.75rem' }}
+            >
+              📅 Round Scope {roundScope.length > 0 ? `(${roundScope.length} fixture${roundScope.length !== 1 ? 's' : ''})` : '— click to set'}
+            </button>
+
+            {scopeOpen && (
+              <div style={{ padding: '0.75rem', borderTop: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ fontSize: '0.8rem' }}>From</label>
+                    <input type="date" value={scopeDateFrom} onChange={e => setScopeDateFrom(e.target.value)}
+                      data-testid="input-scope-date-from" style={{ padding: '0.3rem 0.5rem' }} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label style={{ fontSize: '0.8rem' }}>To</label>
+                    <input type="date" value={scopeDateTo} onChange={e => setScopeDateTo(e.target.value)}
+                      data-testid="input-scope-date-to" style={{ padding: '0.3rem 0.5rem' }} />
+                  </div>
+                  <button className="btn btn-secondary btn-sm" onClick={searchScopeFixtures}
+                    disabled={scopeLoading} data-testid="btn-search-scope-fixtures">
+                    {scopeLoading ? 'Loading…' : 'Search'}
+                  </button>
+                </div>
+
+                {availableFixtures.length === 0 && !scopeLoading && (
+                  <p style={{ color: '#64748b', fontSize: '0.85rem' }}>
+                    No fixtures found. Import them first on the Fixtures tab.
+                  </p>
+                )}
+
+                {availableFixtures.length > 0 && (
+                  <div style={{ maxHeight: '280px', overflowY: 'auto', marginBottom: '0.75rem' }}>
+                    <table style={{ width: '100%', fontSize: '0.8rem' }} data-testid="scope-fixture-list">
+                      <tbody>
+                        {availableFixtures.map(f => {
+                          const checked = selectedFixtureIds.has(f.id)
+                          const d = new Date(f.matchDate)
+                          return (
+                            <tr key={f.id} style={{ borderTop: '1px solid #f1f5f9', cursor: 'pointer' }}
+                              onClick={() => toggleFixture(f.id)}
+                              data-testid={`scope-fixture-${f.id}`}>
+                              <td style={{ padding: '0.35rem 0.4rem', width: '28px' }}>
+                                <input type="checkbox" checked={checked} onChange={() => toggleFixture(f.id)}
+                                  onClick={e => e.stopPropagation()} />
+                              </td>
+                              <td style={{ padding: '0.35rem 0.4rem', color: '#64748b', whiteSpace: 'nowrap' }}>
+                                {d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                                {' '}{d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                              </td>
+                              <td style={{ padding: '0.35rem 0.4rem', fontWeight: 500 }}>{f.homeTeam}</td>
+                              <td style={{ padding: '0.35rem 0.4rem', color: '#94a3b8' }}>vs</td>
+                              <td style={{ padding: '0.35rem 0.4rem', fontWeight: 500 }}>{f.awayTeam}</td>
+                              <td style={{ padding: '0.35rem 0.4rem', color: '#64748b', fontSize: '0.75rem' }}>{f.competitionName}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <button className="btn btn-primary btn-sm" onClick={saveScope}
+                    disabled={scopeLoading} data-testid="btn-save-scope">
+                    Save Scope ({selectedFixtureIds.size} selected)
+                  </button>
+                  {scopeMsg && <span style={{ fontSize: '0.85rem', color: '#22c55e' }}>{scopeMsg}</span>}
+                </div>
+              </div>
+            )}
+          </div>
+
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
             <button className="btn btn-secondary btn-sm"
               onClick={() => setRevealing(prev => !prev)}
@@ -267,7 +441,7 @@ export default function GameDetailTab() {
             <tbody>
               {participants.filter(p => p.isActive).map(p => {
                 const available = getAvailableTeams(p.playerName)
-                const currentPick = pendingPicks[p.playerName] ?? null
+                const currentPick = pendingPicks[p.playerName] ?? ''
                 const pick = picks.find(pk => pk.playerName === p.playerName)
                 const slug = p.playerName.replace(/\s+/g, '-')
                 return (
@@ -275,16 +449,28 @@ export default function GameDetailTab() {
                     <td>{p.playerName}</td>
                     <td>
                       {/* Always render select to prevent layout shift; overlay masks it when hidden */}
-                      <div style={{ position: 'relative', display: 'inline-block', minWidth: '160px' }}>
+                      <div style={{ position: 'relative', display: 'inline-block', minWidth: '200px' }}>
                         <select
-                          value={currentPick ?? ''}
-                          onChange={e => setPendingPicks(prev => ({ ...prev, [p.playerName]: e.target.value ? Number(e.target.value) : null }))}
+                          value={currentPick}
+                          onChange={e => setPendingPicks(prev => ({ ...prev, [p.playerName]: e.target.value }))}
                           data-testid={`select-pick-${slug}`}
                           aria-label={`Pick for ${p.playerName}`}
                           style={{ width: '100%' }}
                         >
                           <option value="">— no pick —</option>
-                          {available.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          {roundScope.length > 0
+                            ? roundScope.map(f => [
+                                <option key={`f:${f.id}:home`} value={`f:${f.id}:home`}
+                                  disabled={isTeamNameUsed(f.homeTeam, p.playerName)}>
+                                  {f.homeTeam} (vs {f.awayTeam} · {formatFixtureDate(f.matchDate)}){isTeamNameUsed(f.homeTeam, p.playerName) ? ' ✓ used' : ''}
+                                </option>,
+                                <option key={`f:${f.id}:away`} value={`f:${f.id}:away`}
+                                  disabled={isTeamNameUsed(f.awayTeam, p.playerName)}>
+                                  {f.awayTeam} (vs {f.homeTeam} · {formatFixtureDate(f.matchDate)}){isTeamNameUsed(f.awayTeam, p.playerName) ? ' ✓ used' : ''}
+                                </option>
+                              ])
+                            : available.map(t => <option key={`t:${t.id}`} value={`t:${t.id}`}>{t.name}</option>)
+                          }
                         </select>
                         {!revealing && (
                           <div
@@ -325,13 +511,12 @@ export default function GameDetailTab() {
             <div style={{ marginTop: '1.5rem' }} data-testid="results-panel">
               <h3>Enter Results</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.75rem' }}>
-                {Object.entries(picksByTeam).map(([teamIdStr, teamPicks]) => {
-                  const teamId = Number(teamIdStr)
-                  const teamName = teams.find(t => t.id === teamId)?.name ?? teamId
+                {Object.entries(picksByTeam).map(([key, teamPicks]) => {
+                  const teamName = teamPicks[0].teamName || key
                   const currentResult = pendingResults[teamPicks[0].id] ?? teamPicks[0].result
                   return (
-                    <div key={teamId} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}
-                      data-testid={`result-row-${teamId}`}>
+                    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}
+                      data-testid={`result-row-${key}`}>
                       <span style={{ minWidth: '140px', fontWeight: 500 }}>{teamName}</span>
                       <span style={{ color: '#64748b', fontSize: '0.8rem' }}>
                         ({teamPicks.map(p => p.playerName).join(', ')})
@@ -344,7 +529,7 @@ export default function GameDetailTab() {
                             teamPicks.forEach(p => { update[p.id] = r })
                             setPendingResults(prev => ({ ...prev, ...update }))
                           }}
-                          data-testid={`btn-result-${r}-${teamId}`}
+                          data-testid={`btn-result-${r}-${key}`}
                           aria-label={`Set ${teamName} result to ${r}`}
                           aria-pressed={currentResult === r}
                         >

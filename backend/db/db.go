@@ -33,10 +33,10 @@ func Connect() (*sql.DB, error) {
 }
 
 // AutoMigrate creates any tables not handled by the SQL init scripts.
-// Safe to call on every startup (uses IF NOT EXISTS).
+// Safe to call on every startup (uses IF NOT EXISTS / ADD COLUMN IF NOT EXISTS).
 func AutoMigrate(database *sql.DB) error {
-	_, err := database.Exec(`
-		CREATE TABLE IF NOT EXISTS fixtures (
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS fixtures (
 			id               SERIAL PRIMARY KEY,
 			api_match_id     INT UNIQUE NOT NULL,
 			competition_code TEXT NOT NULL,
@@ -51,9 +51,22 @@ func AutoMigrate(database *sql.DB) error {
 			away_score       INT,
 			updated_at       TIMESTAMPTZ DEFAULT NOW(),
 			created_at       TIMESTAMPTZ DEFAULT NOW()
-		)
-	`)
-	return err
+		)`,
+		`CREATE TABLE IF NOT EXISTS round_fixtures (
+			id         SERIAL PRIMARY KEY,
+			round_id   INT REFERENCES managed_rounds(id) ON DELETE CASCADE,
+			fixture_id INT REFERENCES fixtures(id) ON DELETE CASCADE,
+			UNIQUE (round_id, fixture_id)
+		)`,
+		`ALTER TABLE managed_picks ADD COLUMN IF NOT EXISTS fixture_id INT REFERENCES fixtures(id)`,
+		`ALTER TABLE managed_picks ADD COLUMN IF NOT EXISTS picked_side TEXT`,
+	}
+	for _, s := range stmts {
+		if _, err := database.Exec(s); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func getEnv(key, def string) string {

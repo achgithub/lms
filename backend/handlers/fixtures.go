@@ -284,6 +284,59 @@ func HandleListFixtures(db *sql.DB) http.HandlerFunc {
 	}
 }
 
+// HandleListFixturesByDate returns fixtures from DB within a date range.
+func HandleListFixturesByDate(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dateFrom := r.URL.Query().Get("dateFrom")
+		dateTo := r.URL.Query().Get("dateTo")
+		if dateFrom == "" || dateTo == "" {
+			http.Error(w, "dateFrom and dateTo required", http.StatusBadRequest)
+			return
+		}
+
+		rows, err := db.Query(`
+			SELECT id, api_match_id, competition_code, competition_name,
+			       match_date, home_team_name, away_team_name, status, home_score, away_score
+			FROM fixtures
+			WHERE match_date::date >= $1::date AND match_date::date <= $2::date
+			ORDER BY match_date ASC
+		`, dateFrom, dateTo)
+		if err != nil {
+			http.Error(w, "server error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		type FixtureRow struct {
+			ID              int    `json:"id"`
+			APIMatchID      int    `json:"apiMatchId"`
+			CompetitionCode string `json:"competitionCode"`
+			CompetitionName string `json:"competitionName"`
+			MatchDate       string `json:"matchDate"`
+			HomeTeam        string `json:"homeTeam"`
+			AwayTeam        string `json:"awayTeam"`
+			Status          string `json:"status"`
+			HomeScore       *int   `json:"homeScore"`
+			AwayScore       *int   `json:"awayScore"`
+		}
+
+		fixtures := []FixtureRow{}
+		for rows.Next() {
+			var f FixtureRow
+			var matchDate time.Time
+			if err := rows.Scan(&f.ID, &f.APIMatchID, &f.CompetitionCode, &f.CompetitionName,
+				&matchDate, &f.HomeTeam, &f.AwayTeam, &f.Status, &f.HomeScore, &f.AwayScore); err != nil {
+				continue
+			}
+			f.MatchDate = matchDate.UTC().Format(time.RFC3339)
+			fixtures = append(fixtures, f)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"fixtures": fixtures})
+	}
+}
+
 func upsertMatches(db *sql.DB, matches []apiMatch) (int, error) {
 	count := 0
 	for _, m := range matches {

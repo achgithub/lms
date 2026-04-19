@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/andrewharris/lms/middleware"
 	"github.com/andrewharris/lms/models"
@@ -32,10 +33,14 @@ func HandleGetRoundPicks(db *sql.DB) http.HandlerFunc {
 		}
 
 		rows, err := db.Query(`
-			SELECT p.id, p.game_id, p.round_id, p.player_name, p.team_id, p.result, p.auto_assigned, p.created_at,
-				COALESCE(t.name,'') as team_name
+			SELECT p.id, p.game_id, p.round_id, p.player_name,
+			       p.team_id, p.fixture_id, p.picked_side, p.result, p.auto_assigned, p.created_at,
+			       COALESCE(t.name,
+			           CASE p.picked_side WHEN 'home' THEN f.home_team_name WHEN 'away' THEN f.away_team_name ELSE '' END,
+			           '') as team_name
 			FROM managed_picks p
-			LEFT JOIN managed_teams t ON t.id=p.team_id
+			LEFT JOIN managed_teams t ON t.id = p.team_id
+			LEFT JOIN fixtures f ON f.id = p.fixture_id
 			WHERE p.round_id=$1 ORDER BY p.player_name
 		`, roundID)
 		if err != nil {
@@ -47,14 +52,22 @@ func HandleGetRoundPicks(db *sql.DB) http.HandlerFunc {
 		picks := []models.PickWithTeamName{}
 		for rows.Next() {
 			var p models.PickWithTeamName
-			var teamID sql.NullInt64
-			var result sql.NullString
-			if err := rows.Scan(&p.ID, &p.GameID, &p.RoundID, &p.PlayerName, &teamID, &result, &p.AutoAssigned, &p.CreatedAt, &p.TeamName); err != nil {
+			var teamID, fixtureID sql.NullInt64
+			var pickedSide, result sql.NullString
+			if err := rows.Scan(&p.ID, &p.GameID, &p.RoundID, &p.PlayerName,
+				&teamID, &fixtureID, &pickedSide, &result, &p.AutoAssigned, &p.CreatedAt, &p.TeamName); err != nil {
 				continue
 			}
 			if teamID.Valid {
 				v := int(teamID.Int64)
 				p.TeamID = &v
+			}
+			if fixtureID.Valid {
+				v := int(fixtureID.Int64)
+				p.FixtureID = &v
+			}
+			if pickedSide.Valid {
+				p.PickedSide = &pickedSide.String
 			}
 			if result.Valid {
 				p.Result = &result.String
@@ -97,11 +110,12 @@ func HandleSavePicks(db *sql.DB) http.HandlerFunc {
 		defer tx.Rollback()
 		for _, pick := range req.Picks {
 			tx.Exec(`
-				INSERT INTO managed_picks (game_id, round_id, player_name, team_id, auto_assigned)
-				VALUES ($1,$2,$3,$4,false)
+				INSERT INTO managed_picks (game_id, round_id, player_name, team_id, fixture_id, picked_side, auto_assigned)
+				VALUES ($1,$2,$3,$4,$5,$6,false)
 				ON CONFLICT (game_id,round_id,player_name)
-				DO UPDATE SET team_id=EXCLUDED.team_id, auto_assigned=false
-			`, gameID, roundID, pick.PlayerName, pick.TeamID)
+				DO UPDATE SET team_id=EXCLUDED.team_id, fixture_id=EXCLUDED.fixture_id,
+				              picked_side=EXCLUDED.picked_side, auto_assigned=false
+			`, gameID, roundID, pick.PlayerName, pick.TeamID, pick.FixtureID, pick.PickedSide)
 		}
 		tx.Commit()
 		w.WriteHeader(http.StatusNoContent)
@@ -280,6 +294,100 @@ func HandleCloseRound(db *sql.DB) http.HandlerFunc {
 
 		db.Exec(`UPDATE managed_rounds SET status='closed' WHERE id=$1`, roundID)
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func HandleGetRoundScope(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		roundID, err := strconv.Atoi(mux.Vars(r)["roundId"])
+		if err != nil {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+
+		rows, err := db.Query(`
+			SELECT f.id, f.api_match_id, f.competition_code, f.competition_name,
+			       f.match_date, f.home_team_name, f.away_team_name, f.status, f.home_score, f.away_score
+			FROM round_fixtures rf
+			JOIN fixtures f ON f.id = rf.fixture_id
+			WHERE rf.round_id = $1
+			ORDER BY f.match_date ASC
+		`, roundID)
+		if err != nil {
+			http.Error(w, "server error", http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		type FixtureRow struct {
+			ID              int    `json:"id"`
+			APIMatchID      int    `json:"apiMatchId"`
+			CompetitionCode string `json:"competitionCode"`
+			CompetitionName string `json:"competitionName"`
+			MatchDate       string `json:"matchDate"`
+			HomeTeam        string `json:"homeTeam"`
+			AwayTeam        string `json:"awayTeam"`
+			Status          string `json:"status"`
+			HomeScore       *int   `json:"homeScore"`
+			AwayScore       *int   `json:"awayScore"`
+		}
+
+		fixtures := []FixtureRow{}
+		for rows.Next() {
+			var f FixtureRow
+			var matchDate time.Time
+			if err := rows.Scan(&f.ID, &f.APIMatchID, &f.CompetitionCode, &f.CompetitionName,
+				&matchDate, &f.HomeTeam, &f.AwayTeam, &f.Status, &f.HomeScore, &f.AwayScore); err != nil {
+				continue
+			}
+			f.MatchDate = matchDate.UTC().Format(time.RFC3339)
+			fixtures = append(fixtures, f)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"fixtures": fixtures})
+	}
+}
+
+func HandleSetRoundScope(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.ClaimsFromContext(r.Context())
+		roundID, err := strconv.Atoi(mux.Vars(r)["roundId"])
+		if err != nil {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+
+		// Verify ownership
+		var count int
+		db.QueryRow(`
+			SELECT COUNT(*) FROM managed_rounds r
+			JOIN managed_games g ON g.id = r.game_id
+			WHERE r.id=$1 AND g.manager_id=$2
+		`, roundID, claims.UserID).Scan(&count)
+		if count == 0 {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+
+		var body struct {
+			FixtureIDs []int `json:"fixtureIds"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+
+		tx, _ := db.Begin()
+		defer tx.Rollback()
+		tx.Exec(`DELETE FROM round_fixtures WHERE round_id=$1`, roundID)
+		for _, fid := range body.FixtureIDs {
+			tx.Exec(`INSERT INTO round_fixtures (round_id, fixture_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, roundID, fid)
+		}
+		tx.Commit()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"saved": len(body.FixtureIDs)})
 	}
 }
 
