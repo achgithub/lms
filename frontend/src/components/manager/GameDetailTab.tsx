@@ -255,10 +255,10 @@ export default function GameDetailTab() {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
             <button className="btn btn-secondary btn-sm"
-              onMouseDown={() => setRevealing(true)} onMouseUp={() => setRevealing(false)}
-              onMouseLeave={() => setRevealing(false)} onTouchStart={() => setRevealing(true)} onTouchEnd={() => setRevealing(false)}
-              data-testid="btn-reveal-picks" aria-label="Hold to reveal picks">
-              👁 Hold to Reveal
+              onClick={() => setRevealing(prev => !prev)}
+              data-testid="btn-reveal-picks" aria-label="Toggle pick visibility"
+              aria-pressed={revealing}>
+              {revealing ? '🔒 Hide Picks' : '👁 Reveal Picks'}
             </button>
           </div>
 
@@ -269,25 +269,42 @@ export default function GameDetailTab() {
                 const available = getAvailableTeams(p.playerName)
                 const currentPick = pendingPicks[p.playerName] ?? null
                 const pick = picks.find(pk => pk.playerName === p.playerName)
+                const slug = p.playerName.replace(/\s+/g, '-')
                 return (
-                  <tr key={p.id} data-testid={`pick-row-${p.playerName.replace(/\s+/g,'-')}`}>
+                  <tr key={p.id} data-testid={`pick-row-${slug}`}>
                     <td>{p.playerName}</td>
                     <td>
-                      {revealing ? (
+                      {/* Always render select to prevent layout shift; overlay masks it when hidden */}
+                      <div style={{ position: 'relative', display: 'inline-block', minWidth: '160px' }}>
                         <select
                           value={currentPick ?? ''}
                           onChange={e => setPendingPicks(prev => ({ ...prev, [p.playerName]: e.target.value ? Number(e.target.value) : null }))}
-                          data-testid={`select-pick-${p.playerName.replace(/\s+/g,'-')}`}
+                          data-testid={`select-pick-${slug}`}
                           aria-label={`Pick for ${p.playerName}`}
+                          style={{ width: '100%' }}
                         >
                           <option value="">— no pick —</option>
                           {available.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                         </select>
-                      ) : (
-                        <span data-testid={`masked-pick-${p.playerName.replace(/\s+/g,'-')}`}>
-                          {currentPick ? '• • • • • • •' : '—'}
-                        </span>
-                      )}
+                        {!revealing && (
+                          <div
+                            data-testid={`masked-pick-${slug}`}
+                            style={{
+                              position: 'absolute', inset: 0,
+                              background: '#f1f5f9',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '4px',
+                              display: 'flex', alignItems: 'center',
+                              padding: '0 0.5rem',
+                              fontSize: '0.875rem',
+                              color: '#94a3b8',
+                              cursor: 'default',
+                            }}
+                          >
+                            {currentPick ? '• • • • • • •' : '—'}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td>{pick?.autoAssigned && <span className="badge badge-open">auto</span>}</td>
                   </tr>
