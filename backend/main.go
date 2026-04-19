@@ -22,6 +22,9 @@ func main() {
 	}
 	defer database.Close()
 
+	if err := dbpkg.AutoMigrate(database); err != nil {
+		log.Fatalf("auto-migrate: %v", err)
+	}
 	seedAdmin(database)
 
 	r := mux.NewRouter()
@@ -50,6 +53,9 @@ func main() {
 	r.Handle("/api/fixtures/competitions", managerMW(http.HandlerFunc(handlers.HandleListCompetitions()))).Methods("GET")
 	r.Handle("/api/fixtures/teams", managerMW(http.HandlerFunc(handlers.HandleGetCompetitionTeams()))).Methods("GET")
 	r.Handle("/api/fixtures/import", managerMW(http.HandlerFunc(handlers.HandleImportFixture(database)))).Methods("POST")
+	r.Handle("/api/fixtures/matches", managerMW(http.HandlerFunc(handlers.HandleListFixtures(database)))).Methods("GET")
+	r.Handle("/api/fixtures/import-matches", managerMW(http.HandlerFunc(handlers.HandleImportMatches(database)))).Methods("POST")
+	r.Handle("/api/fixtures/update-results", managerMW(http.HandlerFunc(handlers.HandleUpdateResults(database)))).Methods("POST")
 
 	// Manager/games routes (manager or games role)
 	gamesMW := middleware.RequireRole(models.RoleManager, models.RoleGames)
