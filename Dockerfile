@@ -10,11 +10,9 @@ RUN npx vite build --outDir /dist
 # Stage 2: Build Go backend
 FROM golang:1.23-alpine AS builder
 WORKDIR /app
-COPY backend/go.mod ./
-RUN GOFLAGS=-mod=mod go mod download
 COPY backend/ ./
 COPY --from=ui /dist ./static
-RUN CGO_ENABLED=0 GOOS=linux go build -o lms-server .
+RUN go mod tidy && CGO_ENABLED=0 GOOS=linux go build -o lms-server .
 
 # Stage 3: Minimal runtime
 FROM alpine:3.20
