@@ -151,6 +151,11 @@ export default function GameDetailTab() {
   async function setManualResult(fixtureId: number) {
     const ms = manualScores[fixtureId]
     if (!ms) return
+    const needsScores = !['POSTPONED', 'SUSPENDED', 'CANCELLED'].includes(ms.status)
+    if (needsScores && (ms.home === '' || ms.away === '')) {
+      setMsg('Enter both home and away scores before setting the result')
+      return
+    }
     setSaving(true)
     setMsg('')
     try {
@@ -335,8 +340,14 @@ export default function GameDetailTab() {
     .filter(p => p.isActive)
     .every(p => picks.find(pk => pk.playerName === p.playerName && (pk.teamId || pk.fixtureId)))
 
-  const allFixturesSettled = roundScope.length > 0 &&
-    roundScope.every(f => ['FINISHED', 'POSTPONED', 'SUSPENDED', 'CANCELLED'].includes(f.status))
+  // Only fixtures where at least one player made a pick
+  const scopeWithPicks = roundScope.filter(f =>
+    (picksByTeam[`f:${f.id}:home`] ?? []).length > 0 ||
+    (picksByTeam[`f:${f.id}:away`] ?? []).length > 0
+  )
+
+  const allFixturesSettled = scopeWithPicks.length > 0 &&
+    scopeWithPicks.every(f => ['FINISHED', 'POSTPONED', 'SUSPENDED', 'CANCELLED'].includes(f.status))
 
   const allPicksHaveResults = picks.length > 0 &&
     picks.filter(p => p.teamId || p.fixtureId).every(p => !!p.result)
@@ -571,9 +582,9 @@ export default function GameDetailTab() {
           </div>
 
           {/* Fixture-based results panel */}
-          {allPicksHaveTeam && roundScope.length > 0 && (
+          {allPicksHaveTeam && scopeWithPicks.length > 0 && (
             <FixtureResultsPanel
-              roundScope={roundScope}
+              roundScope={scopeWithPicks}
               picksByTeam={picksByTeam}
               manualScores={manualScores}
               setManualScores={setManualScores}
@@ -591,7 +602,7 @@ export default function GameDetailTab() {
           )}
 
           {/* Manual results panel (no scope) */}
-          {allPicksHaveTeam && roundScope.length === 0 && (
+          {allPicksHaveTeam && scopeWithPicks.length === 0 && (
             <ManualResultsPanel
               picks={picks}
               picksByTeam={picksByTeam}
