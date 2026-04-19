@@ -11,7 +11,7 @@ RUN npx vite build --outDir /dist
 FROM golang:1.23-alpine AS builder
 WORKDIR /app
 COPY backend/go.mod ./
-RUN go mod download
+RUN GOFLAGS=-mod=mod go mod download
 COPY backend/ ./
 COPY --from=ui /dist ./static
 RUN CGO_ENABLED=0 GOOS=linux go build -o lms-server .
