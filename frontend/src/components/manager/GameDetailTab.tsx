@@ -386,8 +386,14 @@ export default function GameDetailTab() {
               </p>
             )}
           </div>
-          <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}
-            data-testid="btn-delete-game" aria-label="Delete this game">Delete Game</button>
+          <div style={{ display: 'flex', gap: '0.5rem', flexDirection: 'column', alignItems: 'flex-end' }}>
+            {game.status === 'active' && (
+              <button className="btn btn-primary btn-sm" onClick={declareWinners} disabled={saving}
+                data-testid="btn-declare-winners">🏆 Declare Winners</button>
+            )}
+            <button className="btn btn-danger btn-sm" onClick={() => setConfirmDelete(true)}
+              data-testid="btn-delete-game" aria-label="Delete this game">Delete Game</button>
+          </div>
         </div>
       </div>
 
@@ -640,12 +646,8 @@ export default function GameDetailTab() {
                       Reopen
                     </button>
                     {r.id === closedRounds[closedRounds.length - 1].id && !openRound && (
-                      <>
-                        <button className="btn btn-primary btn-sm" onClick={advanceRound} disabled={saving}
-                          data-testid="btn-advance-round">Next Round</button>
-                        <button className="btn btn-secondary btn-sm" onClick={declareWinners} disabled={saving}
-                          data-testid="btn-declare-winners">Declare Winners</button>
-                      </>
+                      <button className="btn btn-primary btn-sm" onClick={advanceRound} disabled={saving}
+                        data-testid="btn-advance-round">Next Round</button>
                     )}
                   </>
                 )}
