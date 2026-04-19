@@ -54,12 +54,12 @@ func main() {
 	r.Handle("/api/fixtures/teams", managerMW(http.HandlerFunc(handlers.HandleGetCompetitionTeams()))).Methods("GET")
 	r.Handle("/api/fixtures/import", managerMW(http.HandlerFunc(handlers.HandleImportFixture(database)))).Methods("POST")
 	r.Handle("/api/fixtures/matches", managerMW(http.HandlerFunc(handlers.HandleListFixtures(database)))).Methods("GET")
-	r.Handle("/api/fixtures/by-date", gamesMW(http.HandlerFunc(handlers.HandleListFixturesByDate(database)))).Methods("GET")
 	r.Handle("/api/fixtures/import-matches", managerMW(http.HandlerFunc(handlers.HandleImportMatches(database)))).Methods("POST")
 	r.Handle("/api/fixtures/update-results", managerMW(http.HandlerFunc(handlers.HandleUpdateResults(database)))).Methods("POST")
 
 	// Manager/games routes (manager or games role)
 	gamesMW := middleware.RequireRole(models.RoleManager, models.RoleGames)
+	r.Handle("/api/fixtures/by-date", gamesMW(http.HandlerFunc(handlers.HandleListFixturesByDate(database)))).Methods("GET")
 	r.Handle("/api/groups", gamesMW(http.HandlerFunc(handlers.HandleListGroups(database)))).Methods("GET")
 	r.Handle("/api/groups", managerMW(http.HandlerFunc(handlers.HandleCreateGroup(database)))).Methods("POST")
 	r.Handle("/api/groups/{id}", managerMW(http.HandlerFunc(handlers.HandleDeleteGroup(database)))).Methods("DELETE")
