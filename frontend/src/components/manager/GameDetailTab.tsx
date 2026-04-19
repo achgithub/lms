@@ -80,7 +80,9 @@ export default function GameDetailTab() {
       else map[pick.playerName] = ''
     })
     setPendingPicks(map)
-    setRoundScope(scopeRes.fixtures ?? [])
+    const scope = scopeRes.fixtures ?? []
+    setRoundScope(scope)
+    setSelectedFixtureIds(new Set(scope.map(f => f.id)))
   }
 
   useEffect(() => {
@@ -453,6 +455,16 @@ export default function GameDetailTab() {
                 )}
 
                 {availableFixtures.length > 0 && (
+                  <div style={{ marginBottom: '0.5rem', display: 'flex', gap: '0.5rem' }}>
+                    <button className="btn btn-secondary btn-sm"
+                      onClick={() => setSelectedFixtureIds(new Set(availableFixtures.map(f => f.id)))}
+                      data-testid="btn-select-all-fixtures">Select All</button>
+                    <button className="btn btn-secondary btn-sm"
+                      onClick={() => setSelectedFixtureIds(new Set())}
+                      data-testid="btn-deselect-all-fixtures">Deselect All</button>
+                  </div>
+                )}
+                {availableFixtures.length > 0 && (
                   <div style={{ maxHeight: '280px', overflowY: 'auto', marginBottom: '0.75rem' }}>
                     <table style={{ width: '100%', fontSize: '0.8rem' }} data-testid="scope-fixture-list">
                       <tbody>
@@ -526,19 +538,16 @@ export default function GameDetailTab() {
                           style={{ width: '100%' }}
                         >
                           <option value="">— no pick —</option>
-                          {roundScope.length > 0
-                            ? roundScope.map(f => [
-                                <option key={`f:${f.id}:home`} value={`f:${f.id}:home`}
-                                  disabled={isTeamNameUsed(f.homeTeam, p.playerName)}>
-                                  {f.homeTeam} (vs {f.awayTeam} · {formatFixtureDate(f.matchDate)}){isTeamNameUsed(f.homeTeam, p.playerName) ? ' ✓ used' : ''}
-                                </option>,
-                                <option key={`f:${f.id}:away`} value={`f:${f.id}:away`}
-                                  disabled={isTeamNameUsed(f.awayTeam, p.playerName)}>
-                                  {f.awayTeam} (vs {f.homeTeam} · {formatFixtureDate(f.matchDate)}){isTeamNameUsed(f.awayTeam, p.playerName) ? ' ✓ used' : ''}
-                                </option>
-                              ])
-                            : available.map(t => <option key={`t:${t.id}`} value={`t:${t.id}`}>{t.name}</option>)
-                          }
+                          {roundScope.map(f => [
+                            <option key={`f:${f.id}:home`} value={`f:${f.id}:home`}
+                              disabled={isTeamNameUsed(f.homeTeam, p.playerName)}>
+                              {f.homeTeam} (vs {f.awayTeam} · {formatFixtureDate(f.matchDate)}){isTeamNameUsed(f.homeTeam, p.playerName) ? ' ✓ used' : ''}
+                            </option>,
+                            <option key={`f:${f.id}:away`} value={`f:${f.id}:away`}
+                              disabled={isTeamNameUsed(f.awayTeam, p.playerName)}>
+                              {f.awayTeam} (vs {f.homeTeam} · {formatFixtureDate(f.matchDate)}){isTeamNameUsed(f.awayTeam, p.playerName) ? ' ✓ used' : ''}
+                            </option>
+                          ])}
                         </select>
                         {!revealing && (
                           <div
