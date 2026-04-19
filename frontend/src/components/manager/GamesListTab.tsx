@@ -17,10 +17,6 @@ export default function GamesListTab() {
   const [selectedPlayers, setSelectedPlayers] = useState<Set<string>>(new Set())
   const [playerSearch, setPlayerSearch] = useState('')
   const [postponeAsWin, setPostponeAsWin] = useState(false)
-  const [winnerMode, setWinnerMode] = useState<'single' | 'multiple'>('single')
-  const [rolloverMode, setRolloverMode] = useState<'round' | 'game'>('round')
-  const [maxWinners, setMaxWinners] = useState(1)
-  const [pickMode, setPickMode] = useState<'manager' | 'player'>('manager')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
@@ -61,8 +57,7 @@ export default function GamesListTab() {
     setCreateError('')
     try {
       const res = await api.post<{ id: number }>('/games', {
-        name: gameName, groupId, playerNames: [...selectedPlayers],
-        postponeAsWin, winnerMode, rolloverMode, maxWinners, pickMode,
+        name: gameName, groupId, playerNames: [...selectedPlayers], postponeAsWin,
       })
       navigate(`/games/${res.id}`)
     } catch (e: unknown) {
@@ -98,41 +93,6 @@ export default function GamesListTab() {
                 data-testid="select-game-group" aria-label="Select group">
                 <option value={0}>— select group —</option>
                 {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div className="form-row">
-            <div className="form-group">
-              <label htmlFor="winner-mode">Winner Mode</label>
-              <select id="winner-mode" value={winnerMode} onChange={e => setWinnerMode(e.target.value as 'single' | 'multiple')}
-                data-testid="select-winner-mode" aria-label="Winner mode">
-                <option value="single">Single Winner</option>
-                <option value="multiple">Multiple Winners</option>
-              </select>
-            </div>
-            {winnerMode === 'multiple' && (
-              <div className="form-group">
-                <label htmlFor="max-winners">Max Winners</label>
-                <input id="max-winners" type="number" min={1} value={maxWinners}
-                  onChange={e => setMaxWinners(Number(e.target.value))}
-                  data-testid="input-max-winners" aria-label="Maximum winners" style={{ width: '80px' }} />
-              </div>
-            )}
-            <div className="form-group">
-              <label htmlFor="rollover-mode">Rollover Mode</label>
-              <select id="rollover-mode" value={rolloverMode} onChange={e => setRolloverMode(e.target.value as 'round' | 'game')}
-                data-testid="select-rollover-mode" aria-label="Rollover mode">
-                <option value="round">Round Rollover</option>
-                <option value="game">Game Rollover</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label htmlFor="pick-mode">Pick Mode</label>
-              <select id="pick-mode" value={pickMode} onChange={e => setPickMode(e.target.value as 'manager' | 'player')}
-                data-testid="select-pick-mode" aria-label="Pick mode">
-                <option value="manager">Manager enters picks</option>
-                <option value="player">Players submit own picks</option>
               </select>
             </div>
           </div>
@@ -196,7 +156,6 @@ export default function GamesListTab() {
                 data-testid={`badge-game-status-${g.id}`}>
                 {g.status}
               </span>
-              <span className="badge badge-closed" data-testid={`badge-pick-mode-${g.id}`}>{g.pickMode}</span>
               <span style={{ flex: 1 }} />
               <span style={{ color: '#64748b', fontSize: '0.85rem' }}>
                 {g.groupName} · {g.participantCount} players · Round {g.currentRound}

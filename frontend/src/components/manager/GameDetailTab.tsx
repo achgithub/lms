@@ -228,17 +228,25 @@ export default function GameDetailTab() {
     setSaving(true)
     setMsg('')
     try {
-      const res = await api.post<{ status?: string; winnerName?: string; roundNumber?: number; rollover?: string }>(`/games/${gameId}/advance`, {})
-      if (res.status === 'completed') {
-        setMsg(`Game complete! Winner: ${res.winnerName}`)
-      } else if (res.rollover) {
-        setMsg(`Rollover! Game reset to round 1.`)
-      } else {
-        setMsg(`Advanced to round ${res.roundNumber}`)
-      }
+      const res = await api.post<{ roundNumber?: number }>(`/games/${gameId}/advance`, {})
+      setMsg(`Advanced to round ${res.roundNumber}`)
       loadGame()
     } catch (e: unknown) {
       setMsg(e instanceof Error ? e.message : 'Failed to advance round')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function declareWinners() {
+    setSaving(true)
+    setMsg('')
+    try {
+      const res = await api.post<{ winnerName?: string }>(`/games/${gameId}/declare-winners`, {})
+      setMsg(`Winners declared: ${res.winnerName}`)
+      loadGame()
+    } catch (e: unknown) {
+      setMsg(e instanceof Error ? e.message : 'Failed to declare winners')
     } finally {
       setSaving(false)
     }
@@ -369,10 +377,7 @@ export default function GameDetailTab() {
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
               <span className={`badge ${game.status === 'active' ? 'badge-active' : 'badge-completed'}`}
                 data-testid="badge-game-status">{game.status}</span>
-              <span className="badge badge-closed" data-testid="badge-pick-mode">{game.pickMode} picks</span>
               <span className="badge badge-closed">{game.groupName}</span>
-              <span className="badge badge-closed">{game.winnerMode} winner</span>
-              <span className="badge badge-closed">rollover: {game.rolloverMode}</span>
               {game.postponeAsWin && <span className="badge badge-open">postpone=win</span>}
             </div>
             {game.winnerName && (
@@ -409,12 +414,6 @@ export default function GameDetailTab() {
       {openRound && game.status === 'active' && (
         <div className="card" data-testid="open-round-panel">
           <h2>Round {openRound.roundNumber} — Picks</h2>
-
-          {game.pickMode === 'player' && (
-            <p style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '1rem' }}>
-              Players submit their own picks. You can still assign picks for players without accounts.
-            </p>
-          )}
 
           {/* Round Scope */}
           <div style={{ marginBottom: '1rem', border: '1px solid #e2e8f0', borderRadius: '6px' }}
@@ -641,8 +640,12 @@ export default function GameDetailTab() {
                       Reopen
                     </button>
                     {r.id === closedRounds[closedRounds.length - 1].id && !openRound && (
-                      <button className="btn btn-primary btn-sm" onClick={advanceRound} disabled={saving}
-                        data-testid="btn-advance-round">Next Round</button>
+                      <>
+                        <button className="btn btn-primary btn-sm" onClick={advanceRound} disabled={saving}
+                          data-testid="btn-advance-round">Next Round</button>
+                        <button className="btn btn-secondary btn-sm" onClick={declareWinners} disabled={saving}
+                          data-testid="btn-declare-winners">Declare Winners</button>
+                      </>
                     )}
                   </>
                 )}

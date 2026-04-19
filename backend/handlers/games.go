@@ -69,18 +69,10 @@ func HandleCreateGame(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "name, groupId, and playerNames required", http.StatusBadRequest)
 			return
 		}
-		if req.WinnerMode == "" {
-			req.WinnerMode = "single"
-		}
-		if req.RolloverMode == "" {
-			req.RolloverMode = "round"
-		}
-		if req.MaxWinners == 0 {
-			req.MaxWinners = 1
-		}
-		if req.PickMode == "" {
-			req.PickMode = "manager"
-		}
+		req.WinnerMode = "single"
+		req.RolloverMode = "round"
+		req.MaxWinners = 1
+		req.PickMode = "manager"
 
 		var count int
 		db.QueryRow(`SELECT COUNT(*) FROM managed_groups WHERE id=$1 AND manager_id=$2`, req.GroupID, claims.UserID).Scan(&count)
@@ -361,7 +353,6 @@ func HandleAddParticipants(db *sql.DB) http.HandlerFunc {
 	}
 }
 
-// HandleAdvanceRound — ported directly from reference, adapted to manager_id
 func HandleAdvanceRound(db *sql.DB) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims := middleware.ClaimsFromContext(r.Context())
@@ -371,90 +362,16 @@ func HandleAdvanceRound(db *sql.DB) http.HandlerFunc {
 			return
 		}
 
-		var winnerMode, rolloverMode string
-		var maxWinners int
-		err = db.QueryRow(`SELECT winner_mode, rollover_mode, max_winners FROM managed_games WHERE id=$1 AND manager_id=$2`,
-			gameID, claims.UserID).Scan(&winnerMode, &rolloverMode, &maxWinners)
-		if err == sql.ErrNoRows {
+		var count int
+		db.QueryRow(`SELECT COUNT(*) FROM managed_games WHERE id=$1 AND manager_id=$2 AND status='active'`,
+			gameID, claims.UserID).Scan(&count)
+		if count == 0 {
 			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		if err != nil {
-			http.Error(w, "server error", http.StatusInternalServerError)
 			return
 		}
 
 		var currentRound int
 		db.QueryRow(`SELECT COALESCE(MAX(round_number),0) FROM managed_rounds WHERE game_id=$1`, gameID).Scan(&currentRound)
-
-		var activeCount int
-		db.QueryRow(`SELECT COUNT(*) FROM managed_participants WHERE game_id=$1 AND is_active=true`, gameID).Scan(&activeCount)
-
-		jsonOK := func(data map[string]interface{}) {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(data)
-		}
-
-		completeGame := func(winners []string) {
-			name := joinNames(winners)
-			db.Exec(`UPDATE managed_games SET status='completed', winner_name=$1 WHERE id=$2`, name, gameID)
-			jsonOK(map[string]interface{}{"status": "completed", "winnerName": name, "multipleWinners": len(winners) > 1})
-		}
-
-		rolloverGame := func() {
-			tx, _ := db.Begin()
-			tx.Exec(`UPDATE managed_participants SET is_active=true, eliminated_in_round=NULL WHERE game_id=$1`, gameID)
-			tx.Exec(`DELETE FROM managed_picks WHERE game_id=$1`, gameID)
-			tx.Exec(`DELETE FROM managed_rounds WHERE game_id=$1`, gameID)
-			tx.Exec(`INSERT INTO managed_rounds (game_id, round_number, status) VALUES ($1,1,'open')`, gameID)
-			tx.Commit()
-			jsonOK(map[string]interface{}{"roundNumber": 1, "rollover": "game"})
-		}
-
-		rolloverRound := func() {
-			db.Exec(`UPDATE managed_participants SET is_active=true, eliminated_in_round=NULL WHERE game_id=$1 AND eliminated_in_round=$2`,
-				gameID, currentRound)
-		}
-
-		if winnerMode == "single" {
-			if activeCount == 1 {
-				var name string
-				db.QueryRow(`SELECT player_name FROM managed_participants WHERE game_id=$1 AND is_active=true`, gameID).Scan(&name)
-				completeGame([]string{name})
-				return
-			}
-			if activeCount == 0 {
-				if rolloverMode == "game" {
-					rolloverGame()
-					return
-				}
-				rolloverRound()
-			}
-		} else {
-			if activeCount > 0 && activeCount <= maxWinners {
-				rows, _ := db.Query(`SELECT player_name FROM managed_participants WHERE game_id=$1 AND is_active=true ORDER BY player_name`, gameID)
-				winners := scanNames(rows)
-				completeGame(winners)
-				return
-			}
-			if activeCount == 0 {
-				var eliminatedCount int
-				db.QueryRow(`SELECT COUNT(*) FROM managed_participants WHERE game_id=$1 AND eliminated_in_round=$2`,
-					gameID, currentRound).Scan(&eliminatedCount)
-				if eliminatedCount <= maxWinners {
-					rows, _ := db.Query(`SELECT player_name FROM managed_participants WHERE game_id=$1 AND eliminated_in_round=$2 ORDER BY player_name`,
-						gameID, currentRound)
-					winners := scanNames(rows)
-					completeGame(winners)
-					return
-				}
-				if rolloverMode == "game" {
-					rolloverGame()
-					return
-				}
-				rolloverRound()
-			}
-		}
 
 		next := currentRound + 1
 		if _, err := db.Exec(`INSERT INTO managed_rounds (game_id, round_number, status) VALUES ($1,$2,'open')`, gameID, next); err != nil {
@@ -462,7 +379,50 @@ func HandleAdvanceRound(db *sql.DB) http.HandlerFunc {
 			http.Error(w, "server error", http.StatusInternalServerError)
 			return
 		}
-		jsonOK(map[string]interface{}{"roundNumber": next})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"roundNumber": next})
+	}
+}
+
+func HandleDeclareWinners(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.ClaimsFromContext(r.Context())
+		gameID, err := strconv.Atoi(mux.Vars(r)["id"])
+		if err != nil {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+
+		var status string
+		err = db.QueryRow(`SELECT status FROM managed_games WHERE id=$1 AND manager_id=$2`, gameID, claims.UserID).Scan(&status)
+		if err == sql.ErrNoRows {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if status != "active" {
+			http.Error(w, "game is not active", http.StatusBadRequest)
+			return
+		}
+
+		rows, err := db.Query(`SELECT player_name FROM managed_participants WHERE game_id=$1 AND is_active=true ORDER BY player_name`, gameID)
+		if err != nil {
+			http.Error(w, "server error", http.StatusInternalServerError)
+			return
+		}
+		winners := scanNames(rows)
+		if len(winners) == 0 {
+			http.Error(w, "no active participants to declare as winners", http.StatusBadRequest)
+			return
+		}
+
+		name := joinNames(winners)
+		if _, err := db.Exec(`UPDATE managed_games SET status='completed', winner_name=$1 WHERE id=$2`, name, gameID); err != nil {
+			http.Error(w, "server error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": "completed", "winnerName": name})
 	}
 }
 
