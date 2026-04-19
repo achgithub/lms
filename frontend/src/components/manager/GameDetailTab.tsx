@@ -346,6 +346,14 @@ export default function GameDetailTab() {
     return acc
   }, {})
 
+  // Filter scope search results to only fixtures involving this group's teams
+  const groupTeamNames = new Set(teams.map(t => t.name.toLowerCase()))
+  const filteredAvailableFixtures = availableFixtures.filter(f =>
+    groupTeamNames.size === 0 ||
+    groupTeamNames.has(f.homeTeam.toLowerCase()) ||
+    groupTeamNames.has(f.awayTeam.toLowerCase())
+  )
+
   const allPicksHaveTeam = picks.length > 0 && participants
     .filter(p => p.isActive)
     .every(p => picks.find(pk => pk.playerName === p.playerName && (pk.teamId || pk.fixtureId)))
@@ -453,27 +461,27 @@ export default function GameDetailTab() {
                   </button>
                 </div>
 
-                {availableFixtures.length === 0 && !scopeLoading && (
+                {filteredAvailableFixtures.length === 0 && !scopeLoading && (
                   <p style={{ color: '#64748b', fontSize: '0.85rem' }}>
                     No fixtures found. Import them first on the Fixtures tab.
                   </p>
                 )}
 
-                {availableFixtures.length > 0 && (
+                {filteredAvailableFixtures.length > 0 && (
                   <div style={{ marginBottom: '0.5rem', display: 'flex', gap: '0.5rem' }}>
                     <button className="btn btn-secondary btn-sm"
-                      onClick={() => setSelectedFixtureIds(new Set(availableFixtures.map(f => f.id)))}
+                      onClick={() => setSelectedFixtureIds(new Set(filteredAvailableFixtures.map(f => f.id)))}
                       data-testid="btn-select-all-fixtures">Select All</button>
                     <button className="btn btn-secondary btn-sm"
                       onClick={() => setSelectedFixtureIds(new Set())}
                       data-testid="btn-deselect-all-fixtures">Deselect All</button>
                   </div>
                 )}
-                {availableFixtures.length > 0 && (
+                {filteredAvailableFixtures.length > 0 && (
                   <div style={{ maxHeight: '280px', overflowY: 'auto', marginBottom: '0.75rem' }}>
                     <table style={{ width: '100%', fontSize: '0.8rem' }} data-testid="scope-fixture-list">
                       <tbody>
-                        {availableFixtures.map(f => {
+                        {filteredAvailableFixtures.map(f => {
                           const checked = selectedFixtureIds.has(f.id)
                           const d = new Date(f.matchDate)
                           return (
