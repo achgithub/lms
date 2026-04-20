@@ -12,6 +12,7 @@ export interface Group {
   id: number
   managerId: number
   name: string
+  competitionCode?: string
   createdAt: string
   teamCount?: number
 }
@@ -48,6 +49,7 @@ export interface Game {
 
 export interface GameWithDetails extends Game {
   groupName: string
+  groupCompetitionCode?: string
   participantCount: number
   currentRound: number
 }

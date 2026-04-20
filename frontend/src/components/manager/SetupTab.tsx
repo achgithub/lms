@@ -9,6 +9,7 @@ export default function SetupTab() {
   const [groupTeams, setGroupTeams] = useState<Record<number, Team[]>>({})
 
   const [newGroupName, setNewGroupName] = useState('')
+  const [editingGroupCode, setEditingGroupCode] = useState<Record<number, string>>({})
   const [newPlayerName, setNewPlayerName] = useState('')
   const [newTeamName, setNewTeamName] = useState<Record<number, string>>({})
 
@@ -47,6 +48,12 @@ export default function SetupTab() {
     if (!newGroupName.trim()) return
     await api.post('/groups', { name: newGroupName })
     setNewGroupName('')
+    loadGroups()
+  }
+
+  async function saveGroupCompetitionCode(groupId: number) {
+    const code = editingGroupCode[groupId]?.trim() ?? ''
+    await api.put(`/groups/${groupId}`, { competitionCode: code || null })
     loadGroups()
   }
 
@@ -174,6 +181,10 @@ export default function SetupTab() {
                 </button>
                 <span style={{ fontWeight: 500 }}>{g.name}</span>
                 <span className="badge badge-closed">{g.teamCount ?? 0} teams</span>
+                {g.competitionCode
+                  ? <span className="badge badge-completed" title="Competition code">{g.competitionCode}</span>
+                  : <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>no competition</span>
+                }
                 <span style={{ flex: 1 }} />
                 <button className="btn-icon" onClick={() => deleteGroup(g.id)}
                   data-testid={`btn-delete-group-${g.id}`} aria-label={`Delete group ${g.name}`}>🗑</button>
@@ -181,6 +192,25 @@ export default function SetupTab() {
 
               {expandedGroup === g.id && (
                 <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid #f1f5f9' }}>
+                  <div className="form-row" style={{ marginBottom: '0.75rem' }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label style={{ fontSize: '0.8rem' }} htmlFor={`comp-code-${g.id}`}>Competition code (e.g. PL, CL)</label>
+                      <input
+                        id={`comp-code-${g.id}`}
+                        type="text"
+                        value={editingGroupCode[g.id] ?? g.competitionCode ?? ''}
+                        onChange={e => setEditingGroupCode(prev => ({ ...prev, [g.id]: e.target.value }))}
+                        onKeyDown={e => e.key === 'Enter' && saveGroupCompetitionCode(g.id)}
+                        placeholder="e.g. PL"
+                        style={{ width: '100px', padding: '0.3rem 0.5rem', textTransform: 'uppercase' }}
+                        data-testid={`input-comp-code-${g.id}`}
+                      />
+                    </div>
+                    <button className="btn btn-secondary btn-sm" onClick={() => saveGroupCompetitionCode(g.id)}
+                      data-testid={`btn-save-comp-code-${g.id}`}>
+                      Save
+                    </button>
+                  </div>
                   <div className="form-row">
                     <input
                       type="text"

@@ -123,6 +123,7 @@ export default function FixturesTab() {
       const res = await api.post<{ groupId: number; teamCount: number }>('/fixtures/import', {
         groupName,
         teamNames: teams.map(t => t.name),
+        competitionCode: selectedCode,
       })
       setSuccess(`Imported "${groupName}" with ${res.teamCount} teams as a new group.`)
       setTeams([])

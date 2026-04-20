@@ -60,6 +60,7 @@ func AutoMigrate(database *sql.DB) error {
 		)`,
 		`ALTER TABLE managed_picks ADD COLUMN IF NOT EXISTS fixture_id INT REFERENCES fixtures(id)`,
 		`ALTER TABLE managed_picks ADD COLUMN IF NOT EXISTS picked_side TEXT`,
+		`ALTER TABLE managed_groups ADD COLUMN IF NOT EXISTS competition_code TEXT`,
 	}
 	for _, s := range stmts {
 		if _, err := database.Exec(s); err != nil {

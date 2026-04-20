@@ -24,10 +24,11 @@ type User struct {
 }
 
 type Group struct {
-	ID        int       `json:"id"`
-	ManagerID int       `json:"managerId"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID              int       `json:"id"`
+	ManagerID       int       `json:"managerId"`
+	Name            string    `json:"name"`
+	CompetitionCode *string   `json:"competitionCode,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 type GroupWithTeamCount struct {
@@ -67,9 +68,10 @@ type Game struct {
 
 type GameWithDetails struct {
 	Game
-	GroupName        string `json:"groupName"`
-	ParticipantCount int    `json:"participantCount"`
-	CurrentRound     int    `json:"currentRound"`
+	GroupName            string  `json:"groupName"`
+	GroupCompetitionCode *string `json:"groupCompetitionCode,omitempty"`
+	ParticipantCount     int     `json:"participantCount"`
+	CurrentRound         int     `json:"currentRound"`
 }
 
 type Participant struct {
@@ -111,7 +113,12 @@ type PickWithTeamName struct {
 // Request types
 
 type CreateGroupRequest struct {
-	Name string `json:"name"`
+	Name            string  `json:"name"`
+	CompetitionCode *string `json:"competitionCode,omitempty"`
+}
+
+type UpdateGroupRequest struct {
+	CompetitionCode *string `json:"competitionCode"`
 }
 
 type CreateTeamRequest struct {

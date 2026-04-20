@@ -71,6 +71,9 @@ export default function ReportsTab() {
   const resultColor: Record<string, string> = {
     win: '#166534', loss: '#991b1b', draw: '#854d0e', postponed: '#475569'
   }
+  const resultIcon: Record<string, string> = {
+    win: '▲', loss: '▼', draw: '=', postponed: '~'
+  }
 
   return (
     <div data-testid="page-reports">
@@ -147,8 +150,8 @@ export default function ReportsTab() {
               {r.status === 'closed' && (
                 <div>
                   <p style={{ fontSize: '0.875rem', marginBottom: '0.75rem', color: '#64748b' }}>
-                    Eliminated: <strong style={{ color: '#ef4444' }}>{r.eliminatedCount}</strong>
-                    {' · '}Through: <strong style={{ color: '#22c55e' }}>{r.throughCount}</strong>
+                    Eliminated: <strong style={{ color: '#ef4444' }}><span aria-hidden="true">✕ </span>{r.eliminatedCount}</strong>
+                    {' · '}Through: <strong style={{ color: '#22c55e' }}><span aria-hidden="true">✓ </span>{r.throughCount}</strong>
                   </p>
                   {r.teamResults && Object.keys(r.teamResults).length > 0 && (
                     <div data-testid={`team-results-${r.roundNumber}`}>
@@ -159,7 +162,7 @@ export default function ReportsTab() {
                             style={{ padding: '0.2rem 0.6rem', borderRadius: '4px', fontSize: '0.8rem',
                               background: '#f1f5f9', color: resultColor[result] ?? '#1a1a1a', fontWeight: 500 }}
                             data-testid={`team-result-${r.roundNumber}-${team.replace(/\s+/g,'-')}`}>
-                            {team}: {result}
+                            <span aria-hidden="true">{resultIcon[result] ?? '·'} </span>{team}: {result}
                           </span>
                         ))}
                       </div>

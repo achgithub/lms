@@ -106,8 +106,9 @@ func HandleGetCompetitionTeams() http.HandlerFunc {
 }
 
 type importFixtureRequest struct {
-	GroupName string   `json:"groupName"`
-	TeamNames []string `json:"teamNames"`
+	GroupName       string   `json:"groupName"`
+	TeamNames       []string `json:"teamNames"`
+	CompetitionCode string   `json:"competitionCode"`
 }
 
 func HandleImportFixture(db *sql.DB) http.HandlerFunc {
@@ -131,9 +132,13 @@ func HandleImportFixture(db *sql.DB) http.HandlerFunc {
 		}
 		defer tx.Rollback()
 
+		var competitionCode interface{}
+		if req.CompetitionCode != "" {
+			competitionCode = req.CompetitionCode
+		}
 		var groupID int
-		err = tx.QueryRow(`INSERT INTO managed_groups (manager_id, name) VALUES ($1,$2) RETURNING id`,
-			claims.UserID, req.GroupName).Scan(&groupID)
+		err = tx.QueryRow(`INSERT INTO managed_groups (manager_id, name, competition_code) VALUES ($1,$2,$3) RETURNING id`,
+			claims.UserID, req.GroupName, competitionCode).Scan(&groupID)
 		if err != nil {
 			http.Error(w, "server error", http.StatusInternalServerError)
 			return

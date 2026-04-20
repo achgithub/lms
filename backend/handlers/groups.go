@@ -16,7 +16,7 @@ func HandleListGroups(db *sql.DB) http.HandlerFunc {
 		claims := middleware.ClaimsFromContext(r.Context())
 
 		rows, err := db.Query(`
-			SELECT g.id, g.manager_id, g.name, g.created_at,
+			SELECT g.id, g.manager_id, g.name, g.competition_code, g.created_at,
 				COALESCE(COUNT(t.id), 0) as team_count
 			FROM managed_groups g
 			LEFT JOIN managed_teams t ON t.group_id = g.id
@@ -33,8 +33,12 @@ func HandleListGroups(db *sql.DB) http.HandlerFunc {
 		groups := []models.GroupWithTeamCount{}
 		for rows.Next() {
 			var g models.GroupWithTeamCount
-			if err := rows.Scan(&g.ID, &g.ManagerID, &g.Name, &g.CreatedAt, &g.TeamCount); err != nil {
+			var code sql.NullString
+			if err := rows.Scan(&g.ID, &g.ManagerID, &g.Name, &code, &g.CreatedAt, &g.TeamCount); err != nil {
 				continue
+			}
+			if code.Valid {
+				g.CompetitionCode = &code.String
 			}
 			groups = append(groups, g)
 		}
@@ -55,8 +59,8 @@ func HandleCreateGroup(db *sql.DB) http.HandlerFunc {
 		}
 
 		var id int
-		err := db.QueryRow(`INSERT INTO managed_groups (manager_id, name) VALUES ($1,$2) RETURNING id`,
-			claims.UserID, req.Name).Scan(&id)
+		err := db.QueryRow(`INSERT INTO managed_groups (manager_id, name, competition_code) VALUES ($1,$2,$3) RETURNING id`,
+			claims.UserID, req.Name, req.CompetitionCode).Scan(&id)
 		if err != nil {
 			http.Error(w, "server error", http.StatusInternalServerError)
 			return
@@ -77,6 +81,37 @@ func HandleDeleteGroup(db *sql.DB) http.HandlerFunc {
 		}
 
 		result, err := db.Exec(`DELETE FROM managed_groups WHERE id=$1 AND manager_id=$2`, id, claims.UserID)
+		if err != nil {
+			http.Error(w, "server error", http.StatusInternalServerError)
+			return
+		}
+		if n, _ := result.RowsAffected(); n == 0 {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func HandleUpdateGroup(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		claims := middleware.ClaimsFromContext(r.Context())
+		id, err := strconv.Atoi(mux.Vars(r)["id"])
+		if err != nil {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+
+		var req models.UpdateGroupRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+
+		result, err := db.Exec(`
+			UPDATE managed_groups SET competition_code=$1
+			WHERE id=$2 AND manager_id=$3
+		`, req.CompetitionCode, id, claims.UserID)
 		if err != nil {
 			http.Error(w, "server error", http.StatusInternalServerError)
 			return

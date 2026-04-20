@@ -286,7 +286,9 @@ export default function GameDetailTab() {
     setScopeLoading(true)
     setScopeMsg('')
     try {
-      await api.post(`/rounds/${openRound.id}/scope`, { fixtureIds: [...selectedFixtureIds] })
+      const visibleIds = new Set(filteredAvailableFixtures.map(f => f.id))
+      const idsToSave = [...selectedFixtureIds].filter(id => visibleIds.has(id))
+      await api.post(`/rounds/${openRound.id}/scope`, { fixtureIds: idsToSave })
       const r = await api.get<{ fixtures: FixtureRow[] }>(`/rounds/${openRound.id}/scope`)
       setRoundScope(r.fixtures ?? [])
       setScopeMsg(`Scope saved — ${r.fixtures?.length ?? 0} fixtures in this round.`)
@@ -346,12 +348,12 @@ export default function GameDetailTab() {
     return acc
   }, {})
 
-  // Filter scope search results to only fixtures involving this group's teams
-  const groupTeamNames = new Set(teams.map(t => t.name.toLowerCase()))
+  // Filter scope search results by the group's competition code when set.
+  // This is the authoritative filter — a PL group only sees PL fixtures regardless
+  // of which teams are playing. Falls back to no filter if code is not set.
+  const groupCompetitionCode = game?.groupCompetitionCode
   const filteredAvailableFixtures = availableFixtures.filter(f =>
-    groupTeamNames.size === 0 ||
-    groupTeamNames.has(f.homeTeam.toLowerCase()) ||
-    groupTeamNames.has(f.awayTeam.toLowerCase())
+    !groupCompetitionCode || f.competitionCode === groupCompetitionCode
   )
 
   const allPicksHaveTeam = picks.length > 0 && participants
@@ -417,6 +419,7 @@ export default function GameDetailTab() {
               className={`badge ${p.isActive ? 'badge-active' : 'badge-eliminated'}`}
               data-testid={`participant-${p.id}`}
               aria-label={`${p.playerName} ${p.isActive ? 'active' : `eliminated round ${p.eliminatedInRound}`}`}>
+              {!p.isActive && <span aria-hidden="true">✕ </span>}
               {p.playerName}
               {!p.isActive && p.eliminatedInRound && ` (R${p.eliminatedInRound})`}
             </span>
@@ -511,7 +514,7 @@ export default function GameDetailTab() {
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <button className="btn btn-primary btn-sm" onClick={saveScope}
                     disabled={scopeLoading} data-testid="btn-save-scope">
-                    Save Scope ({selectedFixtureIds.size} selected)
+                    Save Scope ({filteredAvailableFixtures.filter(f => selectedFixtureIds.has(f.id)).length} selected)
                   </button>
                   {scopeMsg && <span style={{ fontSize: '0.85rem', color: '#22c55e' }}>{scopeMsg}</span>}
                 </div>
@@ -586,6 +589,9 @@ export default function GameDetailTab() {
                       {pick?.autoAssigned && <span className="badge badge-open">auto</span>}
                       {pick?.result && (
                         <span className={`badge badge-${pick.result === 'win' ? 'active' : pick.result === 'loss' ? 'eliminated' : 'closed'}`}>
+                          <span aria-hidden="true">
+                            {pick.result === 'win' ? '▲ ' : pick.result === 'loss' ? '▼ ' : pick.result === 'draw' ? '= ' : '~ '}
+                          </span>
                           {pick.result}
                         </span>
                       )}

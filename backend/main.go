@@ -63,6 +63,7 @@ func main() {
 	r.Handle("/api/fixtures/by-date", gamesMW(http.HandlerFunc(handlers.HandleListFixturesByDate(database)))).Methods("GET")
 	r.Handle("/api/groups", gamesMW(http.HandlerFunc(handlers.HandleListGroups(database)))).Methods("GET")
 	r.Handle("/api/groups", managerMW(http.HandlerFunc(handlers.HandleCreateGroup(database)))).Methods("POST")
+	r.Handle("/api/groups/{id}", managerMW(http.HandlerFunc(handlers.HandleUpdateGroup(database)))).Methods("PUT")
 	r.Handle("/api/groups/{id}", managerMW(http.HandlerFunc(handlers.HandleDeleteGroup(database)))).Methods("DELETE")
 	r.Handle("/api/groups/{id}/teams", gamesMW(http.HandlerFunc(handlers.HandleListTeams(database)))).Methods("GET")
 	r.Handle("/api/groups/{id}/teams", managerMW(http.HandlerFunc(handlers.HandleCreateTeam(database)))).Methods("POST")
@@ -108,7 +109,7 @@ func main() {
 
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
 		AllowedHeaders: []string{"*"},
 	})
 

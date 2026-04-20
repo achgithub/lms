@@ -19,7 +19,7 @@ func HandleListGames(db *sql.DB) http.HandlerFunc {
 		rows, err := db.Query(`
 			SELECT g.id, g.manager_id, g.name, g.group_id, g.status, g.winner_name,
 				g.postpone_as_win, g.winner_mode, g.rollover_mode, g.max_winners, g.pick_mode, g.created_at,
-				COALESCE(gr.name,'') as group_name,
+				COALESCE(gr.name,'') as group_name, gr.competition_code,
 				COALESCE(COUNT(DISTINCT p.id),0) as participant_count,
 				COALESCE(MAX(r.round_number),0) as current_round
 			FROM managed_games g
@@ -27,7 +27,7 @@ func HandleListGames(db *sql.DB) http.HandlerFunc {
 			LEFT JOIN managed_participants p ON p.game_id = g.id
 			LEFT JOIN managed_rounds r ON r.game_id = g.id
 			WHERE g.manager_id = $1
-			GROUP BY g.id, gr.name
+			GROUP BY g.id, gr.name, gr.competition_code
 			ORDER BY g.created_at DESC
 		`, claims.UserID)
 		if err != nil {
@@ -40,13 +40,17 @@ func HandleListGames(db *sql.DB) http.HandlerFunc {
 		for rows.Next() {
 			var g models.GameWithDetails
 			var winner sql.NullString
+			var compCode sql.NullString
 			if err := rows.Scan(&g.ID, &g.ManagerID, &g.Name, &g.GroupID, &g.Status, &winner,
 				&g.PostponeAsWin, &g.WinnerMode, &g.RolloverMode, &g.MaxWinners, &g.PickMode, &g.CreatedAt,
-				&g.GroupName, &g.ParticipantCount, &g.CurrentRound); err != nil {
+				&g.GroupName, &compCode, &g.ParticipantCount, &g.CurrentRound); err != nil {
 				continue
 			}
 			if winner.Valid {
 				g.WinnerName = &winner.String
+			}
+			if compCode.Valid {
+				g.GroupCompetitionCode = &compCode.String
 			}
 			games = append(games, g)
 		}
@@ -135,10 +139,11 @@ func HandleGetGame(db *sql.DB) http.HandlerFunc {
 
 		var game models.GameWithDetails
 		var winner sql.NullString
+		var compCode sql.NullString
 		err = db.QueryRow(`
 			SELECT g.id, g.manager_id, g.name, g.group_id, g.status, g.winner_name,
 				g.postpone_as_win, g.winner_mode, g.rollover_mode, g.max_winners, g.pick_mode, g.created_at,
-				COALESCE(gr.name,'') as group_name,
+				COALESCE(gr.name,'') as group_name, gr.competition_code,
 				COALESCE(COUNT(DISTINCT p.id),0) as participant_count,
 				COALESCE(MAX(r.round_number),0) as current_round
 			FROM managed_games g
@@ -146,10 +151,10 @@ func HandleGetGame(db *sql.DB) http.HandlerFunc {
 			LEFT JOIN managed_participants p ON p.game_id = g.id
 			LEFT JOIN managed_rounds r ON r.game_id = g.id
 			WHERE g.id=$1 AND g.manager_id=$2
-			GROUP BY g.id, gr.name
+			GROUP BY g.id, gr.name, gr.competition_code
 		`, gameID, claims.UserID).Scan(&game.ID, &game.ManagerID, &game.Name, &game.GroupID, &game.Status, &winner,
 			&game.PostponeAsWin, &game.WinnerMode, &game.RolloverMode, &game.MaxWinners, &game.PickMode, &game.CreatedAt,
-			&game.GroupName, &game.ParticipantCount, &game.CurrentRound)
+			&game.GroupName, &compCode, &game.ParticipantCount, &game.CurrentRound)
 		if err == sql.ErrNoRows {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -160,6 +165,9 @@ func HandleGetGame(db *sql.DB) http.HandlerFunc {
 		}
 		if winner.Valid {
 			game.WinnerName = &winner.String
+		}
+		if compCode.Valid {
+			game.GroupCompetitionCode = &compCode.String
 		}
 
 		participantRows, err := db.Query(`
